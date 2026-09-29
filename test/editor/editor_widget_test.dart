@@ -15,7 +15,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const EmberEditorApp());
+    await tester.pumpWidget(const EmberEditorApp(startInLauncher: false));
     await tester.pumpAndSettle();
 
     // 1. Verify Top Bar

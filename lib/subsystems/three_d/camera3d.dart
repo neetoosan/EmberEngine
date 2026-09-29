@@ -78,8 +78,10 @@ class CameraComponent extends EmberComponent {
   Matrix4 getViewMatrix(Vector3 position, Quaternion rotation) {
     final eye = position;
     // Standard right-handed view direction (-Z is forward)
-    final forward = rotation.rotate(Vector3(0, 0, -1));
-    final up = rotation.rotate(Vector3(0, 1, 0));
+    // Same rotation-matrix convention as Transform3DComponent / mesh rendering.
+    final rot = rotation.asRotationMatrix();
+    final forward = rot.transform(Vector3(0, 0, -1));
+    final up = rot.transform(Vector3(0, 1, 0));
     final target = eye + forward;
 
     return makeViewMatrix(eye, target, up);
@@ -285,7 +287,8 @@ class OrbitCameraController {
       right.y, up.y, -forward.y,
       right.z, up.z, -forward.z,
     );
-    return Quaternion.fromRotation(rotM);
+    // fromRotation() stores the transpose; pre-transpose so asRotationMatrix() == rotM.
+    return Quaternion.fromRotation(rotM.transposed());
   }
 
   Vector3 getForward() {

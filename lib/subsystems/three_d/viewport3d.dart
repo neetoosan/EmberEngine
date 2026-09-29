@@ -6,7 +6,10 @@ import 'package:vector_math/vector_math_64.dart' hide Colors;
 import '../../core/engine_loop.dart';
 import '../../core/entity.dart';
 import '../../core/event_bus.dart';
+import '../../core/input.dart';
 import '../../core/transform3d.dart';
+import '../physics/character_controller3d.dart';
+import '../ui/ui_text.dart';
 import 'camera3d.dart';
 import 'components3d.dart';
 import 'gizmos3d.dart';
@@ -53,8 +56,43 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
     if (mounted) setState(() {});
   }
 
+  /// True while a simulation runs and the scene has a camera to look through.
+  bool get _isGameView =>
+      widget.engine.playState != PlayState.stopped && _findGameCamera() != null;
+
+  /// The scene's main camera entity (first enabled camera marked main, else any).
+  EmberEntity? _findGameCamera() {
+    EmberEntity? fallback;
+    for (final e in widget.engine.activeScene.allEntities) {
+      if (!e.enabled) continue;
+      final cam = e.getComponent<CameraComponent>();
+      if (cam == null || !cam.enabled || !e.hasComponent<Transform3DComponent>()) continue;
+      if (cam.isMainCamera) return e;
+      fallback ??= e;
+    }
+    return fallback;
+  }
+
+  static int _buttonIndex(int buttons) {
+    if (buttons & kSecondaryMouseButton != 0) return 2;
+    if (buttons & kMiddleMouseButton != 0) return 1;
+    return 0;
+  }
+
+  void _forwardGamePointer(PointerEvent event) {
+    Input.onMouseMove(
+      Vector2(event.localPosition.dx, event.localPosition.dy),
+      Vector2(event.delta.dx, event.delta.dy),
+    );
+  }
+
   void _handlePointerDown(PointerDownEvent event) {
     _lastMousePos = event.localPosition;
+
+    if (_isGameView) {
+      Input.onMouseDown(_buttonIndex(event.buttons));
+      return;
+    }
 
     if (event.buttons == kPrimaryMouseButton) {
       final selected = widget.engine.selectedEntity;
@@ -86,6 +124,10 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
+    if (_isGameView) {
+      _forwardGamePointer(event);
+      return;
+    }
     if (_lastMousePos != null) {
       final delta = event.localPosition - _lastMousePos!;
       final isAltPressed = HardwareKeyboard.instance.isAltPressed;
@@ -116,12 +158,21 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
   }
 
   void _handlePointerUp(PointerUpEvent event) {
+    // Release every button; PointerUp carries the buttons still held, not the released one.
+    for (final b in const [0, 1, 2]) {
+      Input.onMouseUp(b);
+    }
     _gizmoHandler.activeAxis = GizmoAxis.none;
     _lastMousePos = null;
     setState(() {});
   }
 
+  void _handlePointerHover(PointerHoverEvent event) {
+    if (_isGameView) _forwardGamePointer(event);
+  }
+
   void _handlePointerSignal(PointerSignalEvent event) {
+    if (_isGameView) return;
     if (event is PointerScrollEvent) {
       final zoomFactor = event.scrollDelta.dy > 0 ? 1.1 : 0.9;
       _cameraController.zoom(zoomFactor);
@@ -189,8 +240,19 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final camPos = _cameraController.getPosition();
-    final camRot = _cameraController.getRotation();
+    // While playing, look through the scene's own camera; otherwise use the editor orbit camera.
+    final gameCam = widget.engine.playState != PlayState.stopped ? _findGameCamera() : null;
+    final isGameView = gameCam != null;
+    Vector3 camPos = _cameraController.getPosition();
+    Quaternion camRot = _cameraController.getRotation();
+    CameraComponent? camComp;
+    if (gameCam != null) {
+      final t = gameCam.getComponent<Transform3DComponent>()!;
+      final cc = gameCam.getComponent<CharacterController3DComponent>();
+      camPos = t.worldPosition + (cc?.eyeOffset ?? Vector3.zero());
+      camRot = t.rotation;
+      camComp = gameCam.getComponent<CameraComponent>();
+    }
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -200,24 +262,53 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
           children: [
             // 1. 3D Render Canvas
             Positioned.fill(
-              child: Listener(
-                onPointerDown: _handlePointerDown,
-                onPointerMove: _handlePointerMove,
-                onPointerUp: _handlePointerUp,
-                onPointerSignal: _handlePointerSignal,
-                child: CustomPaint(
-                  size: _viewportSize,
-                  painter: _Renderer3DPainter(
-                    engine: widget.engine,
-                    cameraPosition: camPos,
-                    cameraRotation: camRot,
-                    gizmoHandler: _gizmoHandler,
-                    wireframe: _isWireframe,
-                    showGrid: _showGrid,
+              child: MouseRegion(
+                cursor: isGameView ? SystemMouseCursors.precise : MouseCursor.defer,
+                child: Listener(
+                  onPointerDown: _handlePointerDown,
+                  onPointerMove: _handlePointerMove,
+                  onPointerHover: _handlePointerHover,
+                  onPointerUp: _handlePointerUp,
+                  onPointerSignal: _handlePointerSignal,
+                  child: CustomPaint(
+                    size: _viewportSize,
+                    painter: _Renderer3DPainter(
+                      engine: widget.engine,
+                      cameraPosition: camPos,
+                      cameraRotation: camRot,
+                      cameraComp: camComp,
+                      gizmoHandler: _gizmoHandler,
+                      wireframe: _isWireframe,
+                      showGrid: _showGrid && !isGameView,
+                      isGameView: isGameView,
+                    ),
                   ),
                 ),
               ),
             ),
+
+            if (isGameView) ...[
+              // Crosshair
+              const Center(
+                child: IgnorePointer(
+                  child: Icon(Icons.add, size: 22, color: Color(0xCCFFFFFF)),
+                ),
+              ),
+              Positioned(
+                bottom: 12,
+                left: 12,
+                child: IgnorePointer(
+                  child: Text(
+                    'WASD move · Mouse look · Click/F fire · Space jump · Shift sprint',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.55),
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            if (!isGameView) ...[
 
             // 2. Top-Left Floating Controls HUD
             Positioned(
@@ -341,6 +432,7 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
                 ),
               ),
             ),
+            ],
           ],
         );
       },
@@ -375,17 +467,21 @@ class _Renderer3DPainter extends CustomPainter {
   final EmberEngine engine;
   final Vector3 cameraPosition;
   final Quaternion cameraRotation;
+  final CameraComponent? cameraComp;
   final Gizmo3DHandler gizmoHandler;
   final bool wireframe;
   final bool showGrid;
+  final bool isGameView;
 
   _Renderer3DPainter({
     required this.engine,
     required this.cameraPosition,
     required this.cameraRotation,
+    this.cameraComp,
     required this.gizmoHandler,
     required this.wireframe,
     required this.showGrid,
+    this.isGameView = false,
   }) : super(repaint: engine);
 
   @override
@@ -403,11 +499,17 @@ class _Renderer3DPainter extends CustomPainter {
       engine: engine,
       cameraPosition: cameraPosition,
       cameraRotation: cameraRotation,
+      cameraComp: cameraComp,
       wireframeOverride: wireframe,
       showGrid: showGrid,
+      showSelection: !isGameView,
     );
 
-    // 3. Render 3D Transform Gizmo
+    // On-screen UI text (score, messages)
+    UITextComponent.paintAll(canvas, Offset.zero & size, 1.0, engine.activeScene);
+
+    // 3. Render 3D Transform Gizmo (editor view only)
+    if (isGameView) return;
     gizmoHandler.renderGizmo(
       canvas: canvas,
       size: size,

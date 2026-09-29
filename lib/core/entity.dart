@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'component.dart';
+import 'game_script.dart';
+import 'scene.dart';
 
 /// Callback for component registry deserialization.
 typedef ComponentFactory = EmberComponent Function(Map<String, dynamic> json);
@@ -33,6 +35,7 @@ class EmberEntity with ChangeNotifier {
   final Set<String> tags;
 
   EmberEntity? _parent;
+  EmberScene? _scene;
   final List<EmberEntity> _children = [];
   final List<EmberComponent> _components = [];
 
@@ -58,6 +61,13 @@ class EmberEntity with ChangeNotifier {
 
   /// The parent entity in the hierarchy, or null if root.
   EmberEntity? get parent => _parent;
+
+  /// The scene this entity lives in (resolved through its root ancestor),
+  /// or null if it has not been added to a scene.
+  EmberScene? get scene => _parent?.scene ?? _scene;
+
+  /// Called by [EmberScene] when this entity becomes (or stops being) a root.
+  void bindScene(EmberScene? scene) => _scene = scene;
 
   /// The list of child entities.
   List<EmberEntity> get children => List.unmodifiable(_children);
@@ -187,29 +197,40 @@ class EmberEntity with ChangeNotifier {
     }
   }
 
-  /// Runs the variable frame update.
+  /// Runs the variable frame update. Iterates snapshots so scripts may add or
+  /// remove components/children (or destroy this entity) during the update.
   void update(double dt) {
     if (!_enabled) return;
-    for (final component in _components) {
-      if (component.enabled) {
+    for (final component in List<EmberComponent>.from(_components)) {
+      if (component.enabled && identical(component.entity, this)) {
         component.onUpdate(dt);
       }
     }
-    for (final child in _children) {
-      child.update(dt);
+    for (final child in List<EmberEntity>.from(_children)) {
+      if (identical(child.parent, this)) child.update(dt);
     }
   }
 
   /// Runs the fixed timestep update (e.g. 60Hz physics).
   void fixedUpdate(double fixedDt) {
     if (!_enabled) return;
-    for (final component in _components) {
-      if (component.enabled) {
+    for (final component in List<EmberComponent>.from(_components)) {
+      if (component.enabled && identical(component.entity, this)) {
         component.onFixedUpdate(fixedDt);
       }
     }
-    for (final child in _children) {
-      child.fixedUpdate(fixedDt);
+    for (final child in List<EmberEntity>.from(_children)) {
+      if (identical(child.parent, this)) child.fixedUpdate(fixedDt);
+    }
+  }
+
+  /// Sends a message to every script on this entity (see [GameScript]).
+  void notifyScripts(void Function(GameScript script) message) {
+    for (final c in List<EmberComponent>.from(_components)) {
+      if (c is ScriptComponent && c.enabled) {
+        final s = c.scriptInstance;
+        if (s != null) message(s);
+      }
     }
   }
 
@@ -250,9 +271,9 @@ class EmberEntity with ChangeNotifier {
     };
   }
 
-  factory EmberEntity.fromJson(Map<String, dynamic> json) {
+  factory EmberEntity.fromJson(Map<String, dynamic> json, {bool generateNewIds = false}) {
     final entity = EmberEntity(
-      id: json['id'] as String?,
+      id: generateNewIds ? null : json['id'] as String?,
       name: json['name'] as String? ?? 'Entity',
       enabled: json['enabled'] as bool? ?? true,
       layer: json['layer'] as int? ?? 0,
@@ -272,7 +293,7 @@ class EmberEntity with ChangeNotifier {
 
     final rawChildren = json['children'] as List<dynamic>? ?? [];
     for (final rawChild in rawChildren) {
-      final child = EmberEntity.fromJson(rawChild as Map<String, dynamic>);
+      final child = EmberEntity.fromJson(rawChild as Map<String, dynamic>, generateNewIds: generateNewIds);
       entity.addChild(child);
     }
 

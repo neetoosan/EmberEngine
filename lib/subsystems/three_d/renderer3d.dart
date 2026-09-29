@@ -4,6 +4,7 @@ import 'package:vector_math/vector_math_64.dart' hide Colors;
 import '../../core/engine_loop.dart';
 import '../../core/entity.dart';
 import '../../core/transform3d.dart';
+import '../particles/particle_system.dart';
 import 'camera3d.dart';
 import 'components3d.dart';
 import 'lighting.dart';
@@ -43,6 +44,7 @@ class Renderer3D {
     CameraComponent? cameraComp,
     bool wireframeOverride = false,
     bool showGrid = true,
+    bool showSelection = true,
   }) {
     if (size.width <= 0 || size.height <= 0) return;
 
@@ -83,53 +85,43 @@ class Renderer3D {
       final isWireframe = wireframeOverride || mat.wireframe;
 
       // Transform all vertices for this mesh
-      final screenVertices = <Offset?>[];
+      final clipVertices = <Vector4>[];
       final worldPositions = <Vector3>[];
-      final viewDepths = <double>[];
 
       for (final v in mesh.vertices) {
-        // World position
-        final wPos4 = worldMatrix * Vector4(v.position.x, v.position.y, v.position.z, 1.0);
-        final wPos = Vector3(wPos4.x, wPos4.y, wPos4.z);
-        worldPositions.add(wPos);
-
-        // Clip space position
-        final clipPos = worldViewProj * Vector4(v.position.x, v.position.y, v.position.z, 1.0);
-
-        // Near-plane clipping guard
-        if (clipPos.w <= 0.05) {
-          screenVertices.add(null);
-          viewDepths.add(100000.0);
-          continue;
-        }
-
-        // Perspective divide -> NDC space (-1 to 1)
-        final invW = 1.0 / clipPos.w;
-        final ndcX = clipPos.x * invW;
-        final ndcY = clipPos.y * invW;
-
-        // Viewport screen mapping
-        final sx = (ndcX + 1.0) * 0.5 * size.width;
-        final sy = (1.0 - ndcY) * 0.5 * size.height;
-
-        screenVertices.add(Offset(sx, sy));
-        viewDepths.add(clipPos.w);
+        final local = Vector4(v.position.x, v.position.y, v.position.z, 1.0);
+        final wPos4 = worldMatrix * local;
+        worldPositions.add(Vector3(wPos4.x, wPos4.y, wPos4.z));
+        clipVertices.add(worldViewProj * local);
       }
 
       // Process triangles
       for (final tri in mesh.triangles) {
-        final p0 = screenVertices[tri.a];
-        final p1 = screenVertices[tri.b];
-        final p2 = screenVertices[tri.c];
+        var poly = [clipVertices[tri.a], clipVertices[tri.b], clipVertices[tri.c]];
 
-        if (p0 == null || p1 == null || p2 == null) continue;
+        // Clip against the near plane so large surfaces (floors, walls) the
+        // camera stands inside still render instead of disappearing.
+        if (poly.any((c) => c.w <= _nearW)) {
+          poly = _clipNear(poly);
+          if (poly.length < 3) continue;
+        }
 
-        // Backface Culling in screen space (cross product)
+        final screen = [for (final c in poly) _toScreen(c, size)];
+        final p0 = screen[0];
+        final p1 = screen[1];
+        final p2 = screen[2];
+
+        // Backface culling in screen space. Meshes wind counter-clockwise around
+        // outward normals; with screen Y pointing down, a camera-facing
+        // triangle therefore has a negative cross product.
         final cross = (p1.dx - p0.dx) * (p2.dy - p0.dy) - (p1.dy - p0.dy) * (p2.dx - p0.dx);
-        if (cross <= 0) continue; // Culled
+        if (cross >= 0) continue; // Culled (facing away from the camera)
 
-        // Depth (average distance to camera)
-        final avgDepth = (viewDepths[tri.a] + viewDepths[tri.b] + viewDepths[tri.c]) / 3.0;
+        // Depth (average distance to camera). Flat planes are floors: always
+        // paint them first so they never cover objects standing on them.
+        final avgDepth = mr.primitiveType == MeshPrimitiveType.plane
+            ? double.maxFinite
+            : poly.fold<double>(0.0, (s, c) => s + c.w) / poly.length;
 
         // Calculate Lighting
         final w0 = worldPositions[tri.a];
@@ -148,15 +140,18 @@ class Renderer3D {
           lights: lights,
         );
 
-        projectedTriangles.add(ProjectedTriangle(
-          p0: p0,
-          p1: p1,
-          p2: p2,
-          depth: avgDepth,
-          color: shadedColor,
-          wireframe: isWireframe,
-          entity: entity,
-        ));
+        // Near clipping can turn a triangle into a quad: fan-triangulate it.
+        for (int i = 1; i < screen.length - 1; i++) {
+          projectedTriangles.add(ProjectedTriangle(
+            p0: screen[0],
+            p1: screen[i],
+            p2: screen[i + 1],
+            depth: avgDepth,
+            color: shadedColor,
+            wireframe: isWireframe,
+            entity: entity,
+          ));
+        }
       }
     }
 
@@ -186,8 +181,31 @@ class Renderer3D {
       }
     }
 
-    // 6. Draw Selected Entity Highlight Outline
-    _renderSelectionHighlight(canvas, engine.selectedEntity, viewProjMatrix, size);
+    // 6. Draw 3D Particles
+    _renderParticles3D(canvas, engine, viewProjMatrix, size);
+
+    // 7. Draw Selected Entity Highlight Outline
+    if (showSelection) {
+      _renderSelectionHighlight(canvas, engine.selectedEntity, viewProjMatrix, size);
+    }
+  }
+
+  static void _renderParticles3D(Canvas canvas, EmberEngine engine, Matrix4 viewProj, Size size) {
+    final particlePaint = Paint()..style = PaintingStyle.fill;
+
+    for (final entity in engine.activeScene.allEntities) {
+      if (!entity.enabled) continue;
+      final emitter = entity.getComponent<ParticleEmitter3DComponent>();
+      if (emitter == null || !emitter.enabled) continue;
+
+      for (final p in emitter.particles) {
+        final screenPos = _projectPoint(p.position, viewProj, size);
+        if (screenPos != null) {
+          particlePaint.color = p.color;
+          canvas.drawCircle(screenPos, p.size * 30.0, particlePaint);
+        }
+      }
+    }
   }
 
   static Color _calculateLighting({
@@ -355,6 +373,34 @@ class Renderer3D {
         canvas.drawLine(pA, pB, outlinePaint);
       }
     }
+  }
+
+  /// Minimum clip-space w kept after near-plane clipping.
+  static const double _nearW = 0.05;
+
+  static Offset _toScreen(Vector4 clip, Size size) {
+    final invW = 1.0 / clip.w;
+    return Offset(
+      (clip.x * invW + 1.0) * 0.5 * size.width,
+      (1.0 - clip.y * invW) * 0.5 * size.height,
+    );
+  }
+
+  /// Sutherland–Hodgman clip of a convex clip-space polygon against w > [_nearW].
+  static List<Vector4> _clipNear(List<Vector4> poly) {
+    final out = <Vector4>[];
+    for (int i = 0; i < poly.length; i++) {
+      final cur = poly[i];
+      final prev = poly[(i + poly.length - 1) % poly.length];
+      final curIn = cur.w > _nearW;
+      final prevIn = prev.w > _nearW;
+      if (curIn != prevIn) {
+        final t = (_nearW - prev.w) / (cur.w - prev.w);
+        out.add(prev + (cur - prev) * t);
+      }
+      if (curIn) out.add(cur);
+    }
+    return out;
   }
 
   static Offset? _projectPoint(Vector3 point, Matrix4 viewProj, Size size) {

@@ -72,20 +72,18 @@ class Transform3DComponent extends EmberComponent {
 
   // --- Directional Vectors (in local space) ---
 
-  /// Forward direction vector (along positive Z or negative Z; standard right-handed: -Z is forward).
-  Vector3 get forward {
-    return _rotation.rotate(Vector3(0.0, 0.0, -1.0));
-  }
+  // Directions go through the rotation *matrix* (the same one Matrix4.compose
+  // uses to draw meshes). vector_math's Quaternion.rotate() applies the
+  // inverse rotation, which would make "forward" disagree with what is drawn.
+
+  /// Forward direction vector (right-handed: -Z is forward).
+  Vector3 get forward => _rotation.asRotationMatrix().transform(Vector3(0.0, 0.0, -1.0));
 
   /// Right direction vector (along positive X).
-  Vector3 get right {
-    return _rotation.rotate(Vector3(1.0, 0.0, 0.0));
-  }
+  Vector3 get right => _rotation.asRotationMatrix().transform(Vector3(1.0, 0.0, 0.0));
 
   /// Up direction vector (along positive Y).
-  Vector3 get up {
-    return _rotation.rotate(Vector3(0.0, 1.0, 0.0));
-  }
+  Vector3 get up => _rotation.asRotationMatrix().transform(Vector3(0.0, 1.0, 0.0));
 
   // --- Matrices ---
 
@@ -169,7 +167,8 @@ class Transform3DComponent extends EmberComponent {
       rightDir.z, actualUp.z, -forwardDir.z,
     );
 
-    _rotation = Quaternion.fromRotation(rotMatrix);
+    // fromRotation() stores the transpose; pre-transpose so asRotationMatrix() == rotMatrix.
+    _rotation = Quaternion.fromRotation(rotMatrix.transposed());
     _updateEulerFromQuaternion();
     setDirty();
   }

@@ -3,7 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' as vm;
 import '../../core/engine_loop.dart';
 import '../../core/entity.dart';
+import '../../core/event_bus.dart';
 import '../../core/transform2d.dart';
+import '../../core/assets.dart';
+import '../particles/particle_system.dart';
+import '../ui/ui_text.dart';
+import 'camera2d.dart';
 import 'flame_components.dart';
 
 /// Flame game implementation for Ember Engine's 2D subsystem.
@@ -26,27 +31,74 @@ class EmberFlameGame extends FlameGame {
   Color backgroundColor() => const Color(0xFF121316);
 
 
+  /// The game camera's view while running (null in the editor view).
+  CameraView2D? _gameView;
+
+  /// True when the frame is being drawn through the scene's Camera 2D.
+  bool get isGameView => _gameView != null;
+
   @override
   void render(Canvas canvas) {
     super.render(canvas);
+    final scene = engine.activeScene;
+    final isRunning = engine.playState != PlayState.stopped;
+    final camera = Camera2DComponent.findIn(scene);
+    final screen = Size(size.x, size.y);
 
+    if (isRunning && camera != null) {
+      // Game view: letterboxed design area, seen through the scene camera
+      final view = camera.viewFor(screen);
+      _gameView = view;
+      canvas.drawRect(Offset.zero & screen, Paint()..color = const Color(0xFF000000));
+      canvas.save();
+      canvas.clipRect(view.viewport);
+      canvas.drawRect(view.viewport, Paint()..color = camera.backgroundColor);
+      canvas.translate(view.viewport.center.dx, view.viewport.center.dy);
+      canvas.scale(view.zoom, view.zoom);
+      canvas.translate(-view.center.x, -view.center.y);
+      _drawEntities(canvas, false);
+      canvas.restore();
+      UITextComponent.paintAll(canvas, view.viewport, view.zoom, scene);
+      return;
+    }
+    _gameView = null;
+
+    // Editor view (or a running scene without a Camera 2D)
     canvas.save();
-    // Apply camera transformation: translate then zoom
     canvas.translate(size.x / 2 + panOffset.x, size.y / 2 + panOffset.y);
     canvas.scale(zoom, zoom);
 
-    // 1. Draw pixel grid
-    if (showGrid) {
-      _drawGrid(canvas);
-    }
-
-    // 2. Draw 2D entities
-    _drawEntities(canvas);
-
-    // 3. Draw selection gizmo & bounding box
-    _drawSelectionGizmo(canvas);
-
+    // Editor overlays (grid, hitboxes, selection) are hidden while the game runs
+    if (showGrid && !isRunning) _drawGrid(canvas);
+    if (camera != null && !isRunning) _drawCameraFrame(canvas, camera);
+    _drawEntities(canvas, showHitboxes && !isRunning);
+    if (!isRunning) _drawSelectionGizmo(canvas);
     canvas.restore();
+
+    // UI text previews inside the camera frame (or the whole view without a camera)
+    if (camera != null && camera.designWidth > 0 && camera.designHeight > 0) {
+      final c = camera.position;
+      final tl = worldToScreen(vm.Vector2(c.x - camera.designWidth / 2, c.y - camera.designHeight / 2));
+      final br = worldToScreen(vm.Vector2(c.x + camera.designWidth / 2, c.y + camera.designHeight / 2));
+      UITextComponent.paintAll(canvas, Rect.fromPoints(tl, br), zoom, scene);
+    } else {
+      UITextComponent.paintAll(canvas, Offset.zero & screen, 1.0, scene);
+    }
+  }
+
+  /// Outline of what the game camera will show, so levels can be framed in the editor.
+  void _drawCameraFrame(Canvas canvas, Camera2DComponent camera) {
+    if (camera.designWidth <= 0 || camera.designHeight <= 0) return;
+    final c = camera.position;
+    final rect = Rect.fromCenter(center: Offset(c.x, c.y), width: camera.designWidth, height: camera.designHeight);
+    canvas.drawRect(rect, Paint()..color = camera.backgroundColor.withValues(alpha: 0.35));
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5 / zoom
+        ..color = const Color(0xFFF59E0B),
+    );
   }
 
   void _drawGrid(Canvas canvas) {
@@ -84,7 +136,7 @@ class EmberFlameGame extends FlameGame {
     canvas.drawLine(Offset(0, minY), Offset(0, maxY), axisPaint);
   }
 
-  void _drawEntities(Canvas canvas) {
+  void _drawEntities(Canvas canvas, bool drawHitboxes) {
     final entities = engine.activeScene.allEntities;
 
     // Sort by z-index if Transform2DComponent is present
@@ -112,22 +164,22 @@ class EmberFlameGame extends FlameGame {
       canvas.scale(scale.x, scale.y);
       canvas.translate(-anchorOffset.x, -anchorOffset.y);
 
-      // Draw TileMap if present
+      // Draw TileMap if present (empty-cell outlines only while editing)
       final tilemap = entity.getComponent<FlameTileMapComponent>();
       if (tilemap != null) {
-        _renderTileMap(canvas, tilemap);
+        _renderTileMap(canvas, tilemap, outlineEmpty: engine.playState == PlayState.stopped);
       }
 
-      // Draw Sprite or placeholder
+      // Draw Sprite, or (in the editor only) a placeholder so invisible entities can be found
       final sprite = entity.getComponent<FlameSpriteComponent>();
       if (sprite != null) {
         _renderSprite(canvas, sprite, size);
-      } else if (tilemap == null) {
+      } else if (tilemap == null && engine.playState == PlayState.stopped && size.x > 0 && size.y > 0) {
         _renderEntityPlaceholder(canvas, entity.name, size);
       }
 
       // Draw Hitbox outlines
-      if (showHitboxes) {
+      if (drawHitboxes) {
         final hitbox = entity.getComponent<FlameHitbox2DComponent>();
         if (hitbox != null && hitbox.debugDraw) {
           _renderHitbox(canvas, hitbox, size);
@@ -135,10 +187,25 @@ class EmberFlameGame extends FlameGame {
       }
 
       canvas.restore();
+
+      // Draw 2D Particles. They are simulated in world space, so draw them
+      // outside the entity's local transform.
+      final emitter = entity.getComponent<ParticleEmitter2DComponent>();
+      if (emitter != null && emitter.enabled) {
+        _renderParticles2D(canvas, emitter);
+      }
     }
   }
 
-  void _renderTileMap(Canvas canvas, FlameTileMapComponent tilemap) {
+  void _renderParticles2D(Canvas canvas, ParticleEmitter2DComponent emitter) {
+    final particlePaint = Paint()..style = PaintingStyle.fill;
+    for (final p in emitter.particles) {
+      particlePaint.color = p.color;
+      canvas.drawCircle(Offset(p.position.x, p.position.y), p.size, particlePaint);
+    }
+  }
+
+  void _renderTileMap(Canvas canvas, FlameTileMapComponent tilemap, {required bool outlineEmpty}) {
     final tilePaint = Paint()..style = PaintingStyle.fill;
     final strokePaint = Paint()
       ..color = const Color(0xFF282C37)
@@ -161,24 +228,56 @@ class EmberFlameGame extends FlameGame {
           tilePaint.color = HSLColor.fromAHSL(0.85, hue, 0.6, 0.45).toColor();
           canvas.drawRect(rect, tilePaint);
         }
-        canvas.drawRect(rect, strokePaint);
+        if (tid > 0 || outlineEmpty) canvas.drawRect(rect, strokePaint);
       }
     }
   }
 
   void _renderSprite(Canvas canvas, FlameSpriteComponent sprite, vm.Vector2 size) {
     final rect = Rect.fromLTWH(0, 0, size.x, size.y);
+
+    // Real image (or the current sprite-sheet cell) once it has loaded
+    final image = EmberAssets.instance.image(sprite.assetPath);
+    if (image != null) {
+      final cols = sprite.columns < 1 ? 1 : sprite.columns;
+      final rows = sprite.rows < 1 ? 1 : sprite.rows;
+      final cellW = image.width / cols;
+      final cellH = image.height / rows;
+      final f = sprite.frame % (cols * rows);
+      final src = Rect.fromLTWH((f % cols) * cellW, (f ~/ cols) * cellH, cellW, cellH);
+      final isUntinted = sprite.tint.toARGB32() == 0xFFFFFFFF;
+      final imagePaint = Paint()
+        // No edge anti-aliasing: tiles placed side by side must not show seams
+        ..isAntiAlias = false
+        ..filterQuality = sprite.smooth ? FilterQuality.medium : FilterQuality.none
+        ..color = Color.fromRGBO(255, 255, 255, sprite.opacity)
+        ..colorFilter = isUntinted ? null : ColorFilter.mode(sprite.tint, BlendMode.modulate);
+      canvas.save();
+      if (sprite.flipX || sprite.flipY) {
+        canvas.translate(sprite.flipX ? size.x : 0, sprite.flipY ? size.y : 0);
+        canvas.scale(sprite.flipX ? -1 : 1, sprite.flipY ? -1 : 1);
+      }
+      canvas.drawImageRect(image, src, rect, imagePaint);
+      canvas.restore();
+      return;
+    }
+
     final paint = Paint()
       ..color = sprite.tint.withValues(alpha: sprite.opacity)
       ..style = PaintingStyle.fill;
 
-    // Stylish placeholder with Flame accent gradient
+    // Stylish placeholder: Flame accent gradient, or the sprite's tint when one is set
+    final isUntinted = sprite.tint.toARGB32() == 0xFFFFFFFF;
+    final base = isUntinted ? const Color(0xFF00F5D4) : sprite.tint;
+    final shade = isUntinted
+        ? const Color(0xFF00B4D8)
+        : Color.lerp(sprite.tint, const Color(0xFF000000), 0.35)!;
     final gradient = LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [
-        const Color(0xFF00F5D4).withValues(alpha: sprite.opacity * 0.9),
-        const Color(0xFF00B4D8).withValues(alpha: sprite.opacity * 0.7),
+        base.withValues(alpha: sprite.opacity * 0.9),
+        shade.withValues(alpha: sprite.opacity * 0.7),
       ],
     );
 
@@ -188,11 +287,12 @@ class EmberFlameGame extends FlameGame {
 
     // Inner icon / pattern indicator
     final borderPaint = Paint()
-      ..color = const Color(0xFF00F5D4)
+      ..color = base
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawRRect(rrect, borderPaint);
 
+    if (size.x < 32 || size.y < 24) return;
     final textPainter = TextPainter(
       text: const TextSpan(
         text: '2D',
@@ -313,6 +413,8 @@ class EmberFlameGame extends FlameGame {
 
   vm.Vector2 screenToWorld(Offset screenPos) {
     if (!hasLayout) return vm.Vector2.zero();
+    final view = _gameView;
+    if (view != null) return view.screenToWorld(screenPos);
     final cx = size.x / 2 + panOffset.x;
     final cy = size.y / 2 + panOffset.y;
     final wx = (screenPos.dx - cx) / zoom;
@@ -322,6 +424,8 @@ class EmberFlameGame extends FlameGame {
 
   Offset worldToScreen(vm.Vector2 worldPos) {
     if (!hasLayout) return Offset.zero;
+    final view = _gameView;
+    if (view != null) return view.worldToScreen(worldPos);
     final cx = size.x / 2 + panOffset.x;
     final cy = size.y / 2 + panOffset.y;
     return Offset(cx + worldPos.x * zoom, cy + worldPos.y * zoom);

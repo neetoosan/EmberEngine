@@ -24,10 +24,24 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
+  // Title the window after the executable, so an exported "My Game.exe"
+  // opens as "My Game" while the editor build shows "Ember Engine".
+  std::wstring title = L"Ember Engine";
+  wchar_t exe_path[MAX_PATH];
+  DWORD len = ::GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+  if (len > 0 && len < MAX_PATH) {
+    std::wstring stem(exe_path, len);
+    size_t slash = stem.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) stem = stem.substr(slash + 1);
+    size_t dot = stem.find_last_of(L'.');
+    if (dot != std::wstring::npos) stem = stem.substr(0, dot);
+    if (!stem.empty() && stem != L"ember_engine") title = stem;
+  }
+
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"ember_engine", origin, size)) {
+  if (!window.Create(title.c_str(), origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

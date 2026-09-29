@@ -12,6 +12,7 @@ class EditorShortcutsWrapper extends StatelessWidget {
   final VoidCallback onToggleInspector;
   final VoidCallback onToggleBottomDrawer;
   final VoidCallback onToggleZenMode;
+  final VoidCallback? onSave;
 
   const EditorShortcutsWrapper({
     super.key,
@@ -22,6 +23,7 @@ class EditorShortcutsWrapper extends StatelessWidget {
     required this.onToggleInspector,
     required this.onToggleBottomDrawer,
     required this.onToggleZenMode,
+    this.onSave,
   });
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -29,6 +31,28 @@ class EditorShortcutsWrapper extends StatelessWidget {
 
     final isCtrlOrCmd = HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed;
     final key = event.logicalKey;
+    final isRunning = engine.playState != PlayState.stopped;
+
+    // Esc -> Stop simulation and restore the edited scene
+    if (key == LogicalKeyboardKey.escape && isRunning) {
+      engine.stop();
+      return KeyEventResult.handled;
+    }
+
+    // Ctrl/Cmd + P -> Play / Pause
+    if (isCtrlOrCmd && key == LogicalKeyboardKey.keyP) {
+      engine.playState == PlayState.playing ? engine.pause() : engine.play();
+      return KeyEventResult.handled;
+    }
+
+    // Ctrl/Cmd + S -> Save project
+    if (isCtrlOrCmd && key == LogicalKeyboardKey.keyS && onSave != null) {
+      onSave!();
+      return KeyEventResult.handled;
+    }
+
+    // While the game runs, plain keys belong to gameplay (read through Input).
+    if (isRunning && !isCtrlOrCmd) return KeyEventResult.ignored;
 
     // Ctrl/Cmd + K -> Command Palette
     if (isCtrlOrCmd && key == LogicalKeyboardKey.keyK) {

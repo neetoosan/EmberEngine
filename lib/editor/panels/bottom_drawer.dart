@@ -1,5 +1,7 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' as vm;
+import '../../core/assets.dart';
 import '../../core/engine_loop.dart';
 import '../../core/entity.dart';
 import '../../core/event_bus.dart';
@@ -10,18 +12,23 @@ import '../../subsystems/three_d/material.dart';
 import '../../subsystems/two_d/flame_components.dart';
 import '../../subsystems/two_d/tilemap_editor.dart';
 import '../theme/ember_theme.dart';
+import '../hub/project_assets.dart';
+import '../hub/project_manifest.dart';
+import 'script_editor_panel.dart';
 
-/// Bottom Drawer containing Console Logger, Asset Browser, and Tilemap Palette.
+/// Bottom Drawer containing Console Logger, Asset Browser, Tilemap Palette, and Script Editor.
 ///
-/// Can be expanded (~200px) or collapsed into a 28px status footer bar (toggle with ~).
+/// Can be expanded (~220-280px) or collapsed into a 28px status footer bar (toggle with ~).
 class BottomDrawer extends StatefulWidget {
   final EmberEngine engine;
+  final EmberProject? project;
   final bool isExpanded;
   final VoidCallback onToggleExpand;
 
   const BottomDrawer({
     super.key,
     required this.engine,
+    this.project,
     required this.isExpanded,
     required this.onToggleExpand,
   });
@@ -39,7 +46,7 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -102,7 +109,7 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
     }
 
     return Container(
-      height: 200,
+      height: 250,
       decoration: const BoxDecoration(
         color: EmberTheme.surfacePanel,
         border: Border(
@@ -134,6 +141,7 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
                     Tab(child: Row(children: [Icon(Icons.terminal, size: 13), SizedBox(width: 4), Text('Console')])),
                     Tab(child: Row(children: [Icon(Icons.folder_outlined, size: 13), SizedBox(width: 4), Text('Asset Browser')])),
                     Tab(child: Row(children: [Icon(Icons.grid_view_rounded, size: 13), SizedBox(width: 4), Text('Tilemap Palette')])),
+                    Tab(child: Row(children: [Icon(Icons.code_rounded, size: 13), SizedBox(width: 4), Text('Script Editor')])),
                   ],
                 ),
                 const Spacer(),
@@ -160,6 +168,7 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
                 _buildConsoleTab(),
                 _buildAssetBrowserTab(),
                 TilemapPaletteWidget(engine: widget.engine),
+                ScriptEditorPanel(project: widget.project),
               ],
             ),
           ),
@@ -404,98 +413,136 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
     );
   }
 
-  Widget _buildAssetBrowserTab() {
-    final assets = [
-      {'name': 'hero_player.png', 'type': 'sprite', 'size': '64 KB'},
-      {'name': 'tilemap_dungeon.png', 'type': 'tiles', 'size': '256 KB'},
-      {'name': 'sci_fi_crate.glb', 'type': 'mesh', 'size': '1.2 MB'},
-      {'name': 'environment_sky.hdr', 'type': 'texture', 'size': '4.5 MB'},
-      {'name': 'laser_blast.wav', 'type': 'audio', 'size': '180 KB'},
-      {'name': 'player_controller.dart', 'type': 'script', 'size': '4 KB'},
-    ];
+  Future<void> _importAssets() async {
+    if (EmberAssets.instance.root == null) {
+      widget.engine.log('Save the project first so imported files have a folder to go in.',
+          severity: LogSeverity.warning, source: 'Assets');
+      return;
+    }
+    final files = await FilePicker.pickFiles(
+      dialogTitle: 'Import images or sounds',
+      type: FileType.custom,
+      allowedExtensions: [...ProjectAssets.imageExtensions, ...ProjectAssets.audioExtensions],
+    );
+    for (final f in files) {
+      final path = f.path;
+      if (path == null) continue;
+      final rel = await ProjectAssets.importFile(path);
+      if (rel != null) widget.engine.log('Imported $rel', source: 'Assets');
+    }
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildAssetBrowserTab() => ListenableBuilder(
+        // Thumbnails decode asynchronously; repaint when one arrives.
+        listenable: EmberAssets.instance,
+        builder: (context, _) => _buildAssetBrowserContents(),
+      );
+
+  Widget _buildAssetBrowserContents() {
+    final hasFolder = EmberAssets.instance.root != null;
+    final assets = ProjectAssets.list();
 
     return Container(
       padding: const EdgeInsets.all(8),
-      child: GridView.builder(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 6,
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          childAspectRatio: 1.1,
-        ),
-        itemCount: assets.length,
-        itemBuilder: (context, index) {
-          final asset = assets[index];
-          IconData icon = Icons.insert_drive_file;
-          Color color = EmberTheme.textSecondary;
-
-          if (asset['type'] == 'sprite' || asset['type'] == 'tiles') {
-            icon = Icons.image;
-            color = EmberTheme.accentFlame;
-          } else if (asset['type'] == 'mesh') {
-            icon = Icons.view_in_ar;
-            color = EmberTheme.accentEmber;
-          } else if (asset['type'] == 'audio') {
-            icon = Icons.audiotrack;
-            color = EmberTheme.accentAmber;
-          } else if (asset['type'] == 'script') {
-            icon = Icons.code;
-            color = EmberTheme.accentGreen;
-          }
-
-          return InkWell(
-            onDoubleTap: () => _instantiateAsset(asset),
-            borderRadius: BorderRadius.circular(4),
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: EmberTheme.surfaceCard,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: EmberTheme.borderSubtle),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                hasFolder ? '${assets.length} files in assets/  ·  double-click an image to place it' : 'No project folder yet',
+                style: const TextStyle(fontSize: 10, color: EmberTheme.textMuted),
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(icon, size: 24, color: color),
-                  const SizedBox(height: 4),
-                  Text(
-                    asset['name']!,
-                    style: const TextStyle(fontSize: 10, color: EmberTheme.textPrimary),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                  ),
-                  Text(
-                    asset['size']!,
-                    style: const TextStyle(fontSize: 8, color: EmberTheme.textMuted),
-                  ),
-                ],
+              const Spacer(),
+              TextButton.icon(
+                onPressed: hasFolder ? _importAssets : null,
+                icon: const Icon(Icons.file_upload_outlined, size: 14),
+                label: const Text('Import…', style: TextStyle(fontSize: 11)),
               ),
-            ),
-          );
-        },
+              IconButton(
+                tooltip: 'Refresh',
+                onPressed: () => setState(() {}),
+                icon: const Icon(Icons.refresh, size: 14, color: EmberTheme.textSecondary),
+              ),
+            ],
+          ),
+          Expanded(
+            child: assets.isEmpty
+                ? Center(
+                    child: Text(
+                      hasFolder ? 'Import PNG images or WAV/MP3/OGG sounds to use them in your game.' : 'Save the project (Ctrl+S) to create its assets folder.',
+                      style: const TextStyle(fontSize: 11, color: EmberTheme.textMuted),
+                    ),
+                  )
+                : GridView.builder(
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 110,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 1.0,
+                    ),
+                    itemCount: assets.length,
+                    itemBuilder: (context, index) => _buildAssetTile(assets[index]),
+                  ),
+          ),
+        ],
       ),
     );
   }
 
-  void _instantiateAsset(Map<String, String> asset) {
-    final name = asset['name']!;
-    final type = asset['type']!;
+  Widget _buildAssetTile(String path) {
+    final isImage = ProjectAssets.isImage(path);
+    final image = isImage ? EmberAssets.instance.image(path) : null;
+    final preview = image != null
+        ? RawImage(image: image, fit: BoxFit.contain, filterQuality: FilterQuality.none)
+        : Icon(
+            isImage ? Icons.image : (ProjectAssets.isAudio(path) ? Icons.audiotrack : Icons.insert_drive_file),
+            size: 24,
+            color: isImage ? EmberTheme.accentFlame : EmberTheme.accentAmber,
+          );
 
-    if (type == 'sprite') {
-      final ent = EmberEntity(name: name);
-      ent.addComponent(Transform2DComponent(size: vm.Vector2(48, 48)));
-      ent.addComponent(FlameSpriteComponent(assetPath: 'assets/sprites/$name'));
-      widget.engine.activeScene.addEntity(ent);
-      widget.engine.selectEntity(ent);
-      widget.engine.log('Instantiated Sprite: $name', source: 'AssetBrowser');
-    } else if (type == 'mesh') {
-      final ent = EmberEntity(name: name);
-      ent.addComponent(Transform3DComponent(position: vm.Vector3(0, 1, 0)));
-      ent.addComponent(MeshRenderer3DComponent(primitiveType: MeshPrimitiveType.cube));
-      widget.engine.activeScene.addEntity(ent);
-      widget.engine.selectEntity(ent);
-      widget.engine.log('Instantiated Mesh: $name', source: 'AssetBrowser');
-    }
+    return Tooltip(
+      message: path,
+      child: InkWell(
+        onDoubleTap: isImage ? () => _placeSprite(path) : null,
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: EmberTheme.surfaceCard,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: EmberTheme.borderSubtle),
+          ),
+          child: Column(
+            children: [
+              Expanded(child: Center(child: preview)),
+              const SizedBox(height: 4),
+              Text(
+                path.split('/').last,
+                style: const TextStyle(fontSize: 10, color: EmberTheme.textPrimary),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Adds a sprite entity showing [path], sized to the image.
+  void _placeSprite(String path) {
+    final image = EmberAssets.instance.image(path);
+    final name = path.split('/').last.split('.').first;
+    final ent = EmberEntity(name: name);
+    ent.addComponent(Transform2DComponent(
+      size: image != null ? vm.Vector2(image.width.toDouble(), image.height.toDouble()) : vm.Vector2(48, 48),
+      anchor: EmberAnchor.center,
+    ));
+    ent.addComponent(FlameSpriteComponent(assetPath: path));
+    widget.engine.activeScene.addEntity(ent);
+    widget.engine.selectEntity(ent);
+    widget.engine.log('Placed sprite $path', source: 'Assets');
   }
 }

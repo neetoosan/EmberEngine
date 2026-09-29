@@ -1,6 +1,7 @@
 import 'component.dart';
 import 'entity.dart';
 import 'inspectable.dart';
+import 'scene.dart';
 
 /// User-facing gameplay script contract, mirroring Unity's MonoBehaviour.
 abstract class GameScript {
@@ -10,11 +11,42 @@ abstract class GameScript {
 
   T? getComponent<T extends EmberComponent>() => _entity?.getComponent<T>();
 
+  /// The scene this script's entity lives in.
+  EmberScene? get scene => _entity?.scene;
+
+  /// Adds [newEntity] to this scene (it starts running immediately).
+  EmberEntity spawn(EmberEntity newEntity) {
+    scene?.addEntity(newEntity);
+    return newEntity;
+  }
+
+  /// Removes [target] (default: this script's entity) at the end of the frame.
+  void destroy([EmberEntity? target]) {
+    final e = target ?? _entity;
+    if (e != null) scene?.destroyLater(e);
+  }
+
+  /// First entity in the scene with this name, or null.
+  EmberEntity? find(String name) => scene?.findEntityByName(name);
+
   void onAwake() {}
   void onStart() {}
   void onUpdate(double dt) {}
   void onFixedUpdate(double fixedDt) {}
   void onDestroy() {}
+
+  /// This entity's hitbox started overlapping [other]'s, and at least one of
+  /// the two is a trigger (non-solid). Needs a Hitbox 2D on both entities.
+  void onTriggerEnter(EmberEntity other) {}
+
+  /// The trigger overlap with [other] ended.
+  void onTriggerExit(EmberEntity other) {}
+
+  /// Two solid hitboxes started touching.
+  void onCollisionEnter(EmberEntity other) {}
+
+  /// Two solid hitboxes stopped touching.
+  void onCollisionExit(EmberEntity other) {}
 }
 
 /// Factory signature for instantiating custom GameScripts by name.

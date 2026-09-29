@@ -5,6 +5,8 @@ import '../../core/engine_loop.dart';
 import '../../core/entity.dart';
 import '../../core/event_bus.dart';
 import '../../core/scene.dart';
+import '../../core/scene_serializer.dart';
+import '../../core/game_script.dart';
 import '../../core/transform2d.dart';
 import '../../core/transform3d.dart';
 import '../../subsystems/three_d/camera3d.dart';
@@ -12,6 +14,11 @@ import '../../subsystems/three_d/components3d.dart';
 import '../../subsystems/three_d/lighting.dart';
 import '../../subsystems/three_d/material.dart';
 import '../../subsystems/two_d/flame_components.dart';
+import '../../subsystems/audio/audio_system.dart';
+import '../../subsystems/audio/audio_component.dart';
+import '../../subsystems/physics/character_controller3d.dart';
+import '../../subsystems/physics/character_controller2d.dart';
+import '../../subsystems/particles/particle_system.dart';
 import '../theme/ember_theme.dart';
 
 /// Single executable command in the spotlight palette.
@@ -119,7 +126,67 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
         onExecute: () => widget.engine.stop(),
       ),
 
+      // Prefab Spawning
+      PaletteCommand(
+        title: 'Spawn 3D FPS Player (Capsule + Camera + Audio)',
+        category: 'Prefabs',
+        icon: Icons.person_pin_circle_outlined,
+        onExecute: () {
+          final p = EmberEntity(name: 'FPS Player');
+          p.addComponent(Transform3DComponent(position: vm.Vector3(0, 1.8, 5)));
+          p.addComponent(CameraComponent());
+          p.addComponent(CharacterController3DComponent());
+          p.addComponent(ScriptComponent(scriptName: 'FPSPlayerController'));
+          p.addComponent(AudioSourceComponent(clip: 'laser', is3D: true));
+          widget.engine.activeScene.addEntity(p);
+          widget.engine.selectEntity(p);
+        },
+      ),
+      PaletteCommand(
+        title: 'Spawn 2D Platformer Character (Sprite + Coyote Jump + Audio)',
+        category: 'Prefabs',
+        icon: Icons.directions_run,
+        onExecute: () {
+          final p = EmberEntity(name: 'Platformer Player');
+          p.addComponent(Transform2DComponent(position: vm.Vector2(100, 200), size: vm.Vector2(48, 48)));
+          p.addComponent(FlameSpriteComponent());
+          p.addComponent(FlameHitbox2DComponent(shape: Hitbox2DShape.rectangle));
+          p.addComponent(CharacterController2DComponent());
+          p.addComponent(ScriptComponent(scriptName: 'Platformer2DController'));
+          p.addComponent(ParticleEmitter2DComponent(preset: ParticlePreset.sparkBurst));
+          p.addComponent(AudioSourceComponent(clip: 'jump', is3D: false));
+          widget.engine.activeScene.addEntity(p);
+          widget.engine.selectEntity(p);
+        },
+      ),
+
       // Entity Spawning (3D)
+      PaletteCommand(
+        title: 'Create 3D Dynamic Physics Cube',
+        category: '3D Objects',
+        icon: Icons.view_in_ar_outlined,
+        onExecute: () {
+          final e = EmberEntity(name: 'Physics Cube');
+          e.addComponent(Transform3DComponent(position: vm.Vector3(0, 4, 0)));
+          e.addComponent(MeshRenderer3DComponent(primitiveType: MeshPrimitiveType.cube));
+          e.addComponent(Collider3DComponent(size: vm.Vector3(1, 1, 1)));
+          e.addComponent(RigidBody3DComponent(mass: 2.0));
+          widget.engine.activeScene.addEntity(e);
+          widget.engine.selectEntity(e);
+        },
+      ),
+      PaletteCommand(
+        title: 'Create 3D Fire Particle Emitter',
+        category: '3D Objects',
+        icon: Icons.local_fire_department,
+        onExecute: () {
+          final e = EmberEntity(name: '3D Fire FX');
+          e.addComponent(Transform3DComponent(position: vm.Vector3(0, 1, 0)));
+          e.addComponent(ParticleEmitter3DComponent(preset: ParticlePreset.emberFire));
+          widget.engine.activeScene.addEntity(e);
+          widget.engine.selectEntity(e);
+        },
+      ),
       PaletteCommand(
         title: 'Create 3D Cube',
         category: '3D Objects',
@@ -153,7 +220,7 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
         icon: Icons.wb_sunny_outlined,
         onExecute: () {
           final e = EmberEntity(name: 'Directional Light');
-          e.addComponent(Transform3DComponent(position: vm.Vector3(5, 10, 5)));
+          e.addComponent(Transform3DComponent(position: vm.Vector3(5, 10, 5), euler: vm.Vector3(-50, -30, 0)));
           e.addComponent(LightComponent(type: LightType.directional, intensity: 1.5));
           widget.engine.activeScene.addEntity(e);
           widget.engine.selectEntity(e);
@@ -198,15 +265,42 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
         },
       ),
       PaletteCommand(
-        title: 'Add Box Hitbox 2D',
+        title: 'Create 2D Spark Particle FX',
         category: '2D Flame',
-        icon: Icons.shield_outlined,
+        icon: Icons.auto_awesome,
         onExecute: () {
-          final selected = widget.engine.selectedEntity;
-          if (selected != null) {
-            selected.addComponent(FlameHitbox2DComponent(shape: Hitbox2DShape.rectangle));
-          }
+          final e = EmberEntity(name: '2D Sparks');
+          e.addComponent(Transform2DComponent(position: vm.Vector2(250, 250)));
+          e.addComponent(ParticleEmitter2DComponent(preset: ParticlePreset.sparkBurst));
+          widget.engine.activeScene.addEntity(e);
+          widget.engine.selectEntity(e);
         },
+      ),
+
+      // Audio Synthesizer Testing
+      PaletteCommand(
+        title: 'Play Laser Synth SFX',
+        category: 'Audio Synth',
+        icon: Icons.volume_up,
+        onExecute: () => AudioSystem.instance.play(clip: 'laser'),
+      ),
+      PaletteCommand(
+        title: 'Play Jump Synth SFX',
+        category: 'Audio Synth',
+        icon: Icons.volume_up,
+        onExecute: () => AudioSystem.instance.play(clip: 'jump'),
+      ),
+      PaletteCommand(
+        title: 'Play Explosion Synth SFX',
+        category: 'Audio Synth',
+        icon: Icons.volume_up,
+        onExecute: () => AudioSystem.instance.play(clip: 'explosion'),
+      ),
+      PaletteCommand(
+        title: 'Play Coin Pickup Synth SFX',
+        category: 'Audio Synth',
+        icon: Icons.volume_up,
+        onExecute: () => AudioSystem.instance.play(clip: 'coin'),
       ),
 
       // Gizmo Tools
@@ -230,6 +324,30 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
         icon: Icons.aspect_ratio,
         shortcut: 'R',
         onExecute: () => widget.engine.setGizmo(GizmoType.scale),
+      ),
+
+      // Serialization & Scenes
+      PaletteCommand(
+        title: 'Save Active Scene to JSON Log',
+        category: 'Serialization',
+        icon: Icons.save_alt,
+        shortcut: 'Ctrl+S',
+        onExecute: () {
+          final jsonStr = SceneSerializer.saveSceneToJson(widget.engine.activeScene);
+          widget.engine.log('Scene serialized (${jsonStr.length} chars)', source: 'Serializer');
+        },
+      ),
+      PaletteCommand(
+        title: 'Load Default 3D Scene (FPS & Solar)',
+        category: 'Scenes',
+        icon: Icons.refresh,
+        onExecute: () => widget.engine.loadScene(EmberScene.createDefault3DScene()),
+      ),
+      PaletteCommand(
+        title: 'Load Default 2D Scene (Platformer & Tilemap)',
+        category: 'Scenes',
+        icon: Icons.refresh,
+        onExecute: () => widget.engine.loadScene(EmberScene.createDefault2DScene()),
       ),
 
       // Panel Toggles
@@ -260,20 +378,6 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
         icon: Icons.fullscreen,
         shortcut: 'Tab',
         onExecute: widget.onToggleZenMode,
-      ),
-
-      // Scene Presets
-      PaletteCommand(
-        title: 'Load Default 3D Scene (Solar / Arena)',
-        category: 'Scenes',
-        icon: Icons.refresh,
-        onExecute: () => widget.engine.loadScene(EmberScene.createDefault3DScene()),
-      ),
-      PaletteCommand(
-        title: 'Load Default 2D Scene (Platformer)',
-        category: 'Scenes',
-        icon: Icons.refresh,
-        onExecute: () => widget.engine.loadScene(EmberScene.createDefault2DScene()),
       ),
     ];
   }
@@ -427,15 +531,19 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
                                       color: isSelected ? EmberTheme.accentEmber : EmberTheme.textSecondary,
                                     ),
                                     const SizedBox(width: 8),
-                                    Text(
-                                      cmd.title,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                                        color: isSelected ? Colors.white : EmberTheme.textPrimary,
+                                    Expanded(
+                                      child: Text(
+                                        cmd.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                                          color: isSelected ? Colors.white : EmberTheme.textPrimary,
+                                        ),
                                       ),
                                     ),
-                                    const Spacer(),
+                                    const SizedBox(width: 8),
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                                       decoration: BoxDecoration(

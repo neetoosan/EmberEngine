@@ -1,13 +1,26 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'event_bus.dart';
+import 'input.dart';
 import 'scene.dart';
 import 'entity.dart';
+import '../subsystems/audio/audio_system.dart';
+import '../subsystems/physics/physics_world2d.dart';
+import '../subsystems/physics/character_controller2d.dart';
+import '../subsystems/physics/physics_world3d.dart';
+import '../subsystems/three_d/camera3d.dart';
+
+/// Performance & Power mode for battery / thermal management.
+enum PowerMode {
+  uncapped,
+  performance60,
+  batterySaver30,
+}
 
 /// Central controller and master loop for Ember Engine.
 ///
 /// Coordinates scene lifecycle, play/pause/step simulations, metrics collection,
-/// entity selection, and dimension mode switching (2D vs 3D).
+/// entity selection, physics world stepping, audio updates, and dimension mode switching.
 class EmberEngine with ChangeNotifier {
   static final EmberEngine instance = EmberEngine._();
   EmberEngine._() {
@@ -17,6 +30,7 @@ class EmberEngine with ChangeNotifier {
   PlayState _playState = PlayState.stopped;
   EngineMode _mode = EngineMode.threeD;
   GizmoType _activeGizmo = GizmoType.translate;
+  PowerMode _powerMode = PowerMode.performance60;
 
   late EmberScene _activeScene;
   Map<String, dynamic>? _savedSceneSnapshot;
@@ -49,6 +63,7 @@ class EmberEngine with ChangeNotifier {
   PlayState get playState => _playState;
   EngineMode get mode => _mode;
   GizmoType get activeGizmo => _activeGizmo;
+  PowerMode get powerMode => _powerMode;
   EmberScene get activeScene => _activeScene;
   EmberEntity? get selectedEntity => _selectedEntity;
 
@@ -58,12 +73,25 @@ class EmberEngine with ChangeNotifier {
   int get componentCount => _activeScene.allEntities.fold(0, (sum, e) => sum + e.components.length);
   List<EngineLog> get logs => List.unmodifiable(_logs);
 
+  // --- Power & Battery Management ---
+
+  void setPowerMode(PowerMode mode) {
+    if (_powerMode == mode) return;
+    _powerMode = mode;
+    log('Power mode set to: ${mode.name}', source: 'Engine');
+    notifyListeners();
+  }
+
   // --- Engine Mode ---
+
+  /// When true (a user project is open), switching 2D/3D only changes the
+  /// viewport and never replaces the scene being edited with a starter scene.
+  bool preserveSceneOnModeSwitch = false;
 
   void setMode(EngineMode newMode) {
     if (_mode == newMode) return;
     _mode = newMode;
-    if (_playState == PlayState.stopped) {
+    if (_playState == PlayState.stopped && !preserveSceneOnModeSwitch) {
       if (newMode == EngineMode.twoD) {
         loadScene(EmberScene.createDefault2DScene());
       } else {
@@ -95,7 +123,15 @@ class EmberEngine with ChangeNotifier {
 
   // --- Scene Management ---
 
+  /// The scene as authored in the editor: while a simulation runs this is the
+  /// snapshot taken at Play, so saving never captures mid-game state.
+  EmberScene get editableScene {
+    final snapshot = _savedSceneSnapshot;
+    return snapshot != null ? EmberScene.fromJson(snapshot) : _activeScene;
+  }
+
   void loadScene(EmberScene scene) {
+    if (identical(scene, _activeScene)) return; // would otherwise destroy the scene being loaded
     _activeScene.removeListener(notifyListeners);
     _activeScene.destroy();
     _activeScene = scene;
@@ -112,8 +148,10 @@ class EmberEngine with ChangeNotifier {
     if (_playState == PlayState.stopped) {
       // Save scene state for zero-loss restore upon Stop
       _savedSceneSnapshot = _activeScene.toJson();
+      Input.reset();
       _activeScene.awake();
       _activeScene.start();
+      _activeScene.isRunning = true;
       _startTicker();
     }
 
@@ -136,6 +174,7 @@ class EmberEngine with ChangeNotifier {
       play();
       pause();
     }
+    _simulate(fixedTimestep);
     tick(fixedTimestep);
     log('Stepped 1 frame (${(fixedTimestep * 1000).toStringAsFixed(1)}ms)', source: 'Runtime');
     notifyListeners();
@@ -146,6 +185,10 @@ class EmberEngine with ChangeNotifier {
 
     _stopTicker();
     _playState = PlayState.stopped;
+    _pendingSceneChange = null;
+    _activeScene.isRunning = false;
+    AudioSystem.instance.stopAll();
+    Input.reset();
 
     // Restore pre-simulation snapshot
     if (_savedSceneSnapshot != null) {
@@ -168,6 +211,11 @@ class EmberEngine with ChangeNotifier {
       }
       final dt = (elapsed - _lastTick).inMicroseconds / 1000000.0;
       _lastTick = elapsed;
+
+      // Throttle for battery saver mode (30 FPS max)
+      if (_powerMode == PowerMode.batterySaver30 && dt < (1.0 / 32.0)) {
+        return;
+      }
 
       // Clamp delta to avoid spiral of death on lag spikes
       final clampedDt = dt.clamp(0.001, 0.1);
@@ -196,19 +244,82 @@ class EmberEngine with ChangeNotifier {
       _fpsAccumulator = 0.0;
     }
 
-    // 2. Fixed physics updates
+    // 2-3. Physics + scripts
     if (_playState == PlayState.playing) {
-      _physicsAccumulator += dt;
-      while (_physicsAccumulator >= fixedTimestep) {
-        _activeScene.fixedUpdate(fixedTimestep);
-        _physicsAccumulator -= fixedTimestep;
-      }
-
-      // 3. Variable frame update
-      _activeScene.update(dt);
+      _simulate(dt);
     }
 
+    // 4. Update audio system (ducking, spatial audio, voice cleanup)
+    final listener = _findAudioListener();
+    if (listener != null) {
+      AudioSystem.instance.updateListenerFromEntity(listener);
+    }
+    AudioSystem.instance.update(dt);
+
+    // 5. Flush frame input triggers
+    Input.endFrame();
+
     notifyListeners();
+  }
+
+  /// One simulation frame: fixed-step physics, then the variable update.
+  void _simulate(double dt) {
+    _physicsAccumulator += dt;
+    while (_physicsAccumulator >= fixedTimestep) {
+      if (_mode == EngineMode.threeD) {
+        PhysicsWorld3D.step(_activeScene, fixedTimestep);
+      } else {
+        PhysicsWorld2D.step(_activeScene, fixedTimestep);
+      }
+      _activeScene.fixedUpdate(fixedTimestep);
+      _activeScene.flushDestroyed();
+      _physicsAccumulator -= fixedTimestep;
+    }
+    _activeScene.update(dt);
+    _activeScene.flushDestroyed();
+
+    // Scene changes requested by scripts run here, never mid-iteration.
+    final change = _pendingSceneChange;
+    _pendingSceneChange = null;
+    change?.call();
+  }
+
+  void Function()? _pendingSceneChange;
+
+  /// Restarts the running game from the state it had when Play was pressed
+  /// (e.g. after "Game Over"). Safe to call from scripts; applied after the frame.
+  void restartScene() {
+    final snapshot = _savedSceneSnapshot;
+    if (snapshot == null) return;
+    _pendingSceneChange = () => _startRunningScene(EmberScene.fromJson(snapshot));
+  }
+
+  /// Switches the running game to [scene] (e.g. the next level). Safe to call
+  /// from scripts; applied after the frame. Stop still restores the scene the
+  /// editor had open when Play was pressed.
+  void switchScene(EmberScene scene) {
+    _pendingSceneChange = () => _startRunningScene(scene);
+  }
+
+  void _startRunningScene(EmberScene scene) {
+    loadScene(scene);
+    Input.reset();
+    _physicsAccumulator = 0.0;
+    _activeScene.awake();
+    _activeScene.start();
+    _activeScene.isRunning = true;
+    log('Scene "${scene.name}" (re)started', source: 'Runtime');
+  }
+
+  /// The main camera in 3D, or the 2D player character, so sound pans relative to what the player sees.
+  EmberEntity? _findAudioListener() {
+    for (final e in _activeScene.allEntities) {
+      if (!e.enabled) continue;
+      final cam = e.getComponent<CameraComponent>();
+      if (cam != null && cam.isMainCamera) return e;
+      if (e.hasComponent<CharacterController2DComponent>()) return e;
+    }
+    return null;
   }
 
   // --- Logging ---

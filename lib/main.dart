@@ -1,7 +1,5 @@
-import 'package:flutter/material.dart';
-import 'editor/ember_editor_app.dart';
+import 'main_editor.dart' as editor;
 
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const EmberEditorApp());
-}
+/// Default entry point (`flutter run`) launches the editor.
+/// The standalone game runtime is `lib/main_player.dart`.
+Future<void> main() => editor.main();

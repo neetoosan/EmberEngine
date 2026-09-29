@@ -36,6 +36,13 @@ class EmberTheme {
   static const Color textMuted = Color(0xFF64748B);
   static const Color textDark = Color(0xFF121316);
 
+  // Convenience Aliases for Workstation & Launcher
+  static const Color panelBg = surfacePanel;
+  static const Color canvasBg = surfaceCanvas;
+  static const Color surfaceBg = surfaceCard;
+  static const Color borderMuted = borderMedium;
+  static const Color emberOrange = accentAmber;
+
   // Typography Styles
   static const TextStyle codeStyle = TextStyle(
     fontFamily: 'monospace',

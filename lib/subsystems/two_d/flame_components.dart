@@ -12,13 +12,36 @@ class FlameSpriteComponent extends EmberComponent {
   bool _flipY;
   double _opacity;
 
+  /// Sprite-sheet layout: the image is split into [columns] × [rows] equal
+  /// cells and [frame] (row-major, from 0) is drawn. 1 × 1 draws the whole image.
+  int columns;
+  int rows;
+  int _frame;
+
+  /// Smooth (bilinear) scaling; off keeps pixel art crisp.
+  bool smooth;
+
   FlameSpriteComponent({
     this._assetPath = 'assets/sprites/default_character.png',
     this._tint = Colors.white,
     this._flipX = false,
     this._flipY = false,
     this._opacity = 1.0,
+    this.columns = 1,
+    this.rows = 1,
+    this._frame = 0,
+    this.smooth = false,
   });
+
+  int get frameCount => (columns < 1 ? 1 : columns) * (rows < 1 ? 1 : rows);
+
+  int get frame => _frame;
+  set frame(int val) {
+    final f = val % frameCount;
+    if (f == _frame) return;
+    _frame = f;
+    notifyListeners();
+  }
 
   String get assetPath => _assetPath;
   set assetPath(String val) {
@@ -96,6 +119,52 @@ class FlameSpriteComponent extends EmberComponent {
           getter: () => _flipY,
           setter: (val) => flipY = val,
         ),
+        InspectableProperty<int>(
+          name: 'columns',
+          label: 'Sheet Columns',
+          type: InspectableType.integer,
+          getter: () => columns,
+          setter: (val) {
+            columns = val.clamp(1, 64);
+            notifyListeners();
+          },
+          min: 1,
+          max: 64,
+          step: 1,
+        ),
+        InspectableProperty<int>(
+          name: 'rows',
+          label: 'Sheet Rows',
+          type: InspectableType.integer,
+          getter: () => rows,
+          setter: (val) {
+            rows = val.clamp(1, 64);
+            notifyListeners();
+          },
+          min: 1,
+          max: 64,
+          step: 1,
+        ),
+        InspectableProperty<int>(
+          name: 'frame',
+          label: 'Frame',
+          type: InspectableType.integer,
+          getter: () => _frame,
+          setter: (val) => frame = val,
+          min: 0,
+          step: 1,
+        ),
+        InspectableProperty<bool>(
+          name: 'smooth',
+          label: 'Smooth Scaling',
+          type: InspectableType.boolean,
+          getter: () => smooth,
+          setter: (val) {
+            smooth = val;
+            notifyListeners();
+          },
+          tooltip: 'Off keeps pixel art crisp',
+        ),
       ];
 
   @override
@@ -106,6 +175,10 @@ class FlameSpriteComponent extends EmberComponent {
       'flipX': _flipX,
       'flipY': _flipY,
       'opacity': _opacity,
+      'columns': columns,
+      'rows': rows,
+      'frame': _frame,
+      'smooth': smooth,
     };
   }
 
@@ -116,6 +189,10 @@ class FlameSpriteComponent extends EmberComponent {
     _flipX = json['flipX'] as bool? ?? false;
     _flipY = json['flipY'] as bool? ?? false;
     _opacity = (json['opacity'] as num?)?.toDouble() ?? 1.0;
+    columns = (json['columns'] as num?)?.toInt() ?? 1;
+    rows = (json['rows'] as num?)?.toInt() ?? 1;
+    _frame = (json['frame'] as num?)?.toInt() ?? 0;
+    smooth = json['smooth'] as bool? ?? false;
     notifyListeners();
   }
 
@@ -127,6 +204,10 @@ class FlameSpriteComponent extends EmberComponent {
       flipX: _flipX,
       flipY: _flipY,
       opacity: _opacity,
+      columns: columns,
+      rows: rows,
+      frame: _frame,
+      smooth: smooth,
     );
   }
 }

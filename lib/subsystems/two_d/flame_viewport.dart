@@ -4,7 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:vector_math/vector_math_64.dart' as vm;
 import '../../core/engine_loop.dart';
+import '../../core/event_bus.dart';
+import '../../core/input.dart';
 import '../../core/transform2d.dart';
+import '../physics/character_controller2d.dart';
+import 'camera2d.dart';
 import 'flame_game.dart';
 
 /// Interactive Viewport Widget for the 2D Flame Subsystem.
@@ -41,12 +45,68 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
     super.dispose();
   }
 
+  /// The scene the editor view was last framed for.
+  Object? _framedScene;
+
+  /// When a new scene with a Camera 2D is shown in the editor, centre and zoom
+  /// the view on what the game camera will see.
+  void _frameCameraIfNewScene() {
+    final scene = widget.engine.activeScene;
+    if (identical(scene, _framedScene) || !_game.hasLayout) return;
+    if (widget.engine.playState != PlayState.stopped) return;
+    _framedScene = scene;
+    final cam = Camera2DComponent.findIn(scene);
+    if (cam == null || cam.designWidth <= 0 || cam.designHeight <= 0) return;
+    final fit = 0.9 * [_game.size.x / cam.designWidth, _game.size.y / cam.designHeight].reduce((a, b) => a < b ? a : b);
+    _game.zoom = fit.clamp(0.1, 8.0);
+    _game.panOffset = vm.Vector2(-cam.position.x * _game.zoom, -cam.position.y * _game.zoom);
+  }
+
   void _onEngineChange() {
+    _frameCameraIfNewScene();
+    if (widget.engine.playState == PlayState.playing &&
+        Camera2DComponent.findIn(widget.engine.activeScene) == null) {
+      _followPlayer();
+    }
     if (mounted) setState(() {});
+  }
+
+  bool get _isRunning => widget.engine.playState != PlayState.stopped;
+
+  void _forwardGamePointer(PointerEvent event) {
+    Input.onMouseMove(
+      vm.Vector2(event.localPosition.dx, event.localPosition.dy),
+      vm.Vector2(event.delta.dx, event.delta.dy),
+    );
+    Input.instance.mouseWorldPosition = _game.screenToWorld(event.localPosition);
+  }
+
+  static int _buttonIndex(int buttons) {
+    if (buttons & kSecondaryMouseButton != 0) return 2;
+    if (buttons & kMiddleMouseButton != 0) return 1;
+    return 0;
+  }
+
+  /// Keeps the camera centred on the player character while the game runs.
+  void _followPlayer() {
+    for (final e in widget.engine.activeScene.allEntities) {
+      if (!e.enabled || !e.hasComponent<CharacterController2DComponent>()) continue;
+      final t2d = e.getComponent<Transform2DComponent>();
+      if (t2d == null) return;
+      final target = vm.Vector2(-t2d.worldPosition.x * _game.zoom, -t2d.worldPosition.y * _game.zoom);
+      _game.panOffset += (target - _game.panOffset) * 0.15;
+      return;
+    }
   }
 
   void _handlePointerDown(PointerDownEvent event) {
     _lastPanPos = event.localPosition;
+    if (_isRunning) {
+      // Clicks and touches are gameplay input while the game runs
+      _forwardGamePointer(event);
+      Input.onMouseDown(_buttonIndex(event.buttons));
+      return;
+    }
 
     if (event.buttons == kPrimaryMouseButton) {
       final picked = _game.pickEntity(event.localPosition);
@@ -68,6 +128,10 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
 
   void _handlePointerMove(PointerMoveEvent event) {
     _mousePos = event.localPosition;
+    if (_isRunning) {
+      _forwardGamePointer(event);
+      return;
+    }
 
     if (_isDraggingEntity && widget.engine.selectedEntity != null) {
       final t2d = widget.engine.selectedEntity!.getComponent<Transform2DComponent>();
@@ -107,8 +171,16 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
   }
 
   void _handlePointerUp(PointerUpEvent event) {
+    // PointerUp carries the buttons still held, not the released one: release all.
+    for (final b in const [0, 1, 2]) {
+      Input.onMouseUp(b);
+    }
     _isDraggingEntity = false;
     _lastPanPos = null;
+  }
+
+  void _handlePointerHover(PointerHoverEvent event) {
+    if (_isRunning) _forwardGamePointer(event);
   }
 
   void _handlePointerSignal(PointerSignalEvent event) {
@@ -138,6 +210,15 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
   @override
   Widget build(BuildContext context) {
     final worldMouse = _game.screenToWorld(_mousePos);
+    if (!identical(widget.engine.activeScene, _framedScene)) {
+      // The game view only has a size after layout; frame the camera then.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final before = _framedScene;
+        _frameCameraIfNewScene();
+        if (!identical(before, _framedScene)) setState(() {});
+      });
+    }
 
     return Stack(
       children: [
@@ -146,11 +227,14 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
           child: Listener(
             onPointerDown: _handlePointerDown,
             onPointerMove: _handlePointerMove,
+            onPointerHover: _handlePointerHover,
             onPointerUp: _handlePointerUp,
             onPointerSignal: _handlePointerSignal,
             child: GameWidget(game: _game),
           ),
         ),
+
+        if (widget.engine.playState == PlayState.stopped) ...[
 
         // 2. Top-Left Floating Controls HUD
         Positioned(
@@ -278,6 +362,7 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
             ),
           ),
         ),
+        ],
       ],
     );
   }

@@ -1,23 +1,36 @@
 import 'package:flutter/material.dart';
 import '../../core/engine_loop.dart';
 import '../../core/event_bus.dart';
+import '../../core/scene_serializer.dart';
 import '../theme/ember_theme.dart';
 import '../ui_primitives/status_pill.dart';
 
 /// 36px Minimalist Header Top Bar for Ember Engine.
 ///
 /// Houses Logo, Scene Name, Transport Controls (Play/Pause/Step/Stop),
-/// 2D/3D Mode Switcher, Gizmo Selectors (W, E, R), and Performance Stats Pill.
+/// 2D/3D Mode Switcher, Gizmo Selectors (W, E, R), Save, Mobile Touch, Power Mode, and Performance Stats Pill.
 class EditorTopBar extends StatelessWidget {
   final EmberEngine engine;
   final VoidCallback onOpenCommandPalette;
   final VoidCallback onToggleZenMode;
+  final VoidCallback? onToggleVirtualJoystick;
+  final bool showVirtualJoystick;
+  final VoidCallback? onSaveScene;
+  final VoidCallback? onOpenProjectHub;
+  final VoidCallback? onOpenDoctor;
+  final VoidCallback? onExportGame;
 
   const EditorTopBar({
     super.key,
     required this.engine,
     required this.onOpenCommandPalette,
     required this.onToggleZenMode,
+    this.onToggleVirtualJoystick,
+    this.showVirtualJoystick = false,
+    this.onSaveScene,
+    this.onOpenProjectHub,
+    this.onOpenDoctor,
+    this.onExportGame,
   });
 
   @override
@@ -38,32 +51,39 @@ class EditorTopBar extends StatelessWidget {
       child: Row(
         children: [
           // 1. Logo & Engine Title
-          Row(
-            children: [
-              Container(
-                width: 20,
-                height: 20,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: is2D
-                        ? [EmberTheme.accentFlame, const Color(0xFF00B4D8)]
-                        : [EmberTheme.accentEmber, const Color(0xFF8B5CF6)],
+          InkWell(
+            onTap: onOpenProjectHub,
+            borderRadius: BorderRadius.circular(4),
+            child: Tooltip(
+              message: 'Project Hub / Switch Project',
+              child: Row(
+                children: [
+                  Container(
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: is2D
+                            ? [EmberTheme.accentFlame, const Color(0xFF00B4D8)]
+                            : [EmberTheme.accentEmber, const Color(0xFF8B5CF6)],
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Icon(Icons.local_fire_department, size: 14, color: Colors.white),
                   ),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Icon(Icons.local_fire_department, size: 14, color: Colors.white),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'EMBER',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              const Text(
-                'EMBER',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.0,
-                ),
-              ),
-            ],
+            ),
           ),
 
           const SizedBox(width: 12),
@@ -219,7 +239,85 @@ class EditorTopBar extends StatelessWidget {
 
           const SizedBox(width: 8),
 
-          // 7. Performance Status Pill
+          // 7. Save Project Button
+          Tooltip(
+            message: 'Save Project (Ctrl+S)',
+            child: IconButton(
+              icon: const Icon(Icons.save_outlined, size: 16, color: EmberTheme.textSecondary),
+              onPressed: onSaveScene ?? () {
+                final jsonStr = SceneSerializer.saveSceneToJson(engine.activeScene);
+                engine.log('Saved Scene "${engine.activeScene.name}" (${jsonStr.length} chars)', source: 'Serializer');
+              },
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              padding: EdgeInsets.zero,
+            ),
+          ),
+
+          // 7b. Export standalone game
+          if (onExportGame != null)
+            Tooltip(
+              message: 'Export Game (standalone build)',
+              child: IconButton(
+                icon: const Icon(Icons.ios_share, size: 15, color: EmberTheme.textSecondary),
+                onPressed: onExportGame,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+
+          const SizedBox(width: 4),
+
+          // 8. Virtual Touch Controls Toggle
+          if (onToggleVirtualJoystick != null)
+            Tooltip(
+              message: showVirtualJoystick ? 'Hide Touch Controls' : 'Show Virtual Touch Controls',
+              child: IconButton(
+                icon: Icon(
+                  Icons.sports_esports_outlined,
+                  size: 16,
+                  color: showVirtualJoystick ? EmberTheme.accentFlame : EmberTheme.textMuted,
+                ),
+                onPressed: onToggleVirtualJoystick,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+
+          const SizedBox(width: 4),
+
+          // 9. Power Mode Toggle
+          Tooltip(
+            message: 'Power Mode: ${engine.powerMode.name} (Click to toggle)',
+            child: InkWell(
+              onTap: () {
+                final nextMode = engine.powerMode == PowerMode.performance60
+                    ? PowerMode.batterySaver30
+                    : (engine.powerMode == PowerMode.batterySaver30 ? PowerMode.uncapped : PowerMode.performance60);
+                engine.setPowerMode(nextMode);
+              },
+              borderRadius: BorderRadius.circular(3),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: engine.powerMode == PowerMode.batterySaver30
+                      ? EmberTheme.accentAmber.withValues(alpha: 0.15)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Icon(
+                  engine.powerMode == PowerMode.batterySaver30 ? Icons.battery_saver : Icons.bolt,
+                  size: 15,
+                  color: engine.powerMode == PowerMode.batterySaver30
+                      ? EmberTheme.accentAmber
+                      : EmberTheme.accentGreen,
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 8),
+
+          // 10. Performance Status Pill
           StatusPill(
             fps: engine.fps,
             frameTimeMs: engine.frameTimeMs,
@@ -230,7 +328,7 @@ class EditorTopBar extends StatelessWidget {
 
           const SizedBox(width: 8),
 
-          // 8. Zen / Fullscreen Mode Button
+          // 11. Zen / Fullscreen Mode Button
           Tooltip(
             message: 'Zen Mode (Tab)',
             child: IconButton(
@@ -240,6 +338,32 @@ class EditorTopBar extends StatelessWidget {
               padding: EdgeInsets.zero,
             ),
           ),
+
+          if (onOpenDoctor != null) ...[
+            const SizedBox(width: 4),
+            Tooltip(
+              message: 'Ember Doctor & Build Diagnostics',
+              child: IconButton(
+                icon: const Icon(Icons.health_and_safety_outlined, size: 16, color: Colors.greenAccent),
+                onPressed: onOpenDoctor,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+          ],
+
+          if (onOpenProjectHub != null) ...[
+            const SizedBox(width: 4),
+            Tooltip(
+              message: 'Project Hub',
+              child: IconButton(
+                icon: const Icon(Icons.home_outlined, size: 16, color: EmberTheme.textSecondary),
+                onPressed: onOpenProjectHub,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+          ],
         ],
       ),
     );
