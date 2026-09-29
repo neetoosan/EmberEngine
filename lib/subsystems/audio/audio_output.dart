@@ -3,62 +3,88 @@ import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import '../../core/assets.dart';
 import 'audio_system.dart';
 
-/// Plays [AudioSystem] sounds through the device speakers.
+/// Plays [AudioSystem] voices through the device speakers.
 ///
-/// The mixer ([AudioSystem]) decides *what* to play and how loud / where;
-/// this class turns each procedural effect into a WAV file once (cached in the
-/// temp folder, one file per effect and pitch step) and plays it with
-/// `audioplayers`. Kept separate so tests and headless tools never touch the
+/// - Procedural effects (`jump`, `laser`, `coin`, …) are synthesized to a WAV
+///   once (cached in the temp folder, one file per effect and pitch step).
+/// - Audio files (`assets/audio/theme.ogg`, WAV/MP3/OGG) play from the project
+///   or exported game folder, falling back to the engine's bundled assets.
+/// - Looping voices (music) keep playing until stopped.
+///
+/// Kept separate from the mixer so tests and headless tools never touch the
 /// platform audio plugin — call [attach] from an app entry point.
-class AudioOutput {
+class AudioOutput implements AudioBackend {
   static final AudioOutput instance = AudioOutput._();
   AudioOutput._();
 
-  /// Upper bound on simultaneously playing sounds; the oldest is cut first.
+  /// Upper bound on simultaneously playing one-shot sounds; the oldest is cut first.
   static const int maxVoices = 12;
 
   bool _attached = false;
   bool _reportedError = false;
   Directory? _cacheDir;
   final Map<String, Future<String?>> _wavCache = {};
-  final List<AudioPlayer> _voices = [];
+  final Map<int, AudioPlayer> _players = {};
+  final List<int> _oneShotOrder = [];
 
   /// Starts routing [AudioSystem] playback to real audio output.
   void attach() {
     if (_attached || kIsWeb) return;
     _attached = true;
-    AudioSystem.instance.onPlayProceduralSound = (clip, volume, pitch, pan) {
-      unawaited(_play(clip, volume, pitch, pan));
-    };
+    AudioSystem.instance.backend = this;
   }
 
-  Future<void> _play(String clip, double volume, double pitch, double pan) async {
-    if (volume <= 0.001) return;
-    try {
-      // Pitch is baked into the WAV sample rate, quantised so the cache stays small.
-      final pitchStep = ((pitch.clamp(0.5, 2.0)) * 20).round() / 20;
-      final path = await _wavCache.putIfAbsent('$clip@$pitchStep', () => _writeWav(clip, pitchStep));
-      if (path == null) return;
+  static bool isFileClip(String clip) => clip.contains('/') || clip.contains('.');
 
-      if (_voices.length >= maxVoices) {
-        unawaited(_release(_voices.first));
+  @override
+  void play(AudioVoice voice, double volume, double pan) {
+    if (volume <= 0.001 && !voice.isLooping) return;
+    unawaited(_play(voice, volume, pan));
+  }
+
+  Future<void> _play(AudioVoice voice, double volume, double pan) async {
+    try {
+      final Source source;
+      if (isFileClip(voice.clip)) {
+        final file = EmberAssets.instance.resolveFile(voice.clip);
+        source = file != null && await file.exists()
+            ? DeviceFileSource(file.path)
+            : AssetSource(voice.clip.startsWith('assets/') ? voice.clip.substring(7) : voice.clip);
+      } else {
+        // Pitch is baked into the WAV sample rate, quantised so the cache stays small.
+        final pitchStep = (voice.pitch.clamp(0.5, 2.0) * 20).round() / 20;
+        final path = await _wavCache.putIfAbsent('${voice.clip}@$pitchStep', () => _writeWav(voice.clip, pitchStep));
+        if (path == null) return;
+        source = DeviceFileSource(path);
+      }
+      if (!voice.isPlaying) return; // stopped while loading
+
+      if (!voice.isLooping) {
+        if (_oneShotOrder.length >= maxVoices) _release(_oneShotOrder.first);
+        _oneShotOrder.add(voice.id);
       }
       final player = AudioPlayer();
-      _voices.add(player);
-      player.onPlayerComplete.listen((_) => _release(player));
-      // Safety net in case a platform never reports completion.
-      Timer(const Duration(seconds: 3), () => _release(player));
+      _players[voice.id] = player;
+      player.onPlayerComplete.listen((_) {
+        if (!voice.isLooping) _release(voice.id);
+      });
+      if (!voice.isLooping && !isFileClip(voice.clip)) {
+        // Safety net in case a platform never reports completion.
+        Timer(const Duration(seconds: 3), () => _release(voice.id));
+      }
 
-      await player.setReleaseMode(ReleaseMode.stop);
+      await player.setReleaseMode(voice.isLooping ? ReleaseMode.loop : ReleaseMode.stop);
       await player.setVolume(volume.clamp(0.0, 1.0));
       try {
         await player.setBalance(pan.clamp(-1.0, 1.0));
+        if (isFileClip(voice.clip) && voice.pitch != 1.0) await player.setPlaybackRate(voice.pitch);
       } catch (_) {
-        // Stereo balance is not supported on every platform; play centred.
+        // Balance / rate are not supported on every platform.
       }
-      await player.play(DeviceFileSource(path));
+      await player.play(source);
     } catch (e) {
       if (!_reportedError) {
         _reportedError = true;
@@ -67,11 +93,26 @@ class AudioOutput {
     }
   }
 
-  Future<void> _release(AudioPlayer player) async {
-    if (!_voices.remove(player)) return;
-    try {
-      await player.dispose();
-    } catch (_) {}
+  @override
+  void stop(AudioVoice voice) => _release(voice.id);
+
+  @override
+  void stopAll() {
+    for (final id in List<int>.from(_players.keys)) {
+      _release(id);
+    }
+  }
+
+  void _release(int voiceId) {
+    _oneShotOrder.remove(voiceId);
+    final player = _players.remove(voiceId);
+    if (player == null) return;
+    unawaited(() async {
+      try {
+        await player.stop();
+        await player.dispose();
+      } catch (_) {}
+    }());
   }
 
   Future<String?> _writeWav(String clip, double pitch) async {

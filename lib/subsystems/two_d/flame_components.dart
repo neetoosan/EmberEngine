@@ -3,6 +3,7 @@ import 'package:vector_math/vector_math_64.dart' as vm;
 import '../../core/component.dart';
 import '../../core/entity.dart';
 import '../../core/inspectable.dart';
+import '../../core/transform2d.dart';
 
 /// 2D Sprite component rendered in Flame or custom 2D canvas.
 class FlameSpriteComponent extends EmberComponent {
@@ -358,36 +359,148 @@ class FlameHitbox2DComponent extends EmberComponent {
   }
 }
 
+/// How a tile behaves for characters. Tile ID 0 is always empty.
+enum TileKind {
+  /// Blocks from every side (ground, walls).
+  solid,
+
+  /// Drawn but not collidable (background decoration).
+  decoration,
+
+  /// Stand on it from above; jump up through it.
+  oneWay,
+
+  /// Not solid; characters touching it get `onTileTouch` (spikes, lava).
+  hazard,
+
+  /// Solid; scripts usually break it when bumped from below.
+  breakable,
+
+  /// Solid "?" block; scripts usually give a reward when bumped from below.
+  question,
+
+  /// Solid block that was already used (e.g. an emptied "?" block).
+  usedBlock;
+
+  bool get blocks => this != decoration && this != hazard && this != oneWay;
+}
+
+/// A tile found by a tilemap query.
+class TileHit {
+  final FlameTileMapComponent map;
+  final int col;
+  final int row;
+  final int tileId;
+  final TileKind kind;
+
+  /// World-space rectangle of the tile.
+  final Rect rect;
+
+  const TileHit(this.map, this.col, this.row, this.tileId, this.kind, this.rect);
+
+  /// Replaces this tile (0 removes it), e.g. to break a brick or empty a "?" block.
+  void setTile(int id) => map.setTile(col, row, id);
+}
+
 /// 2D TileMap grid component.
+///
+/// Tiles are drawn from [tilesetPath] (an image cut into [tilesetColumns]
+/// columns of [tilesetTileSize]-pixel cells; tile ID n uses cell n-1) or as
+/// coloured blocks when no tileset is set. [tileKinds] gives each ID its
+/// behaviour; IDs not listed are [TileKind.solid].
 class FlameTileMapComponent extends EmberComponent {
   int _columns;
   int _rows;
   double _tileSize;
   late List<int> _tiles;
 
+  String tilesetPath;
+  int tilesetColumns;
+  int tilesetTileSize;
+  final Map<int, TileKind> tileKinds;
+
   FlameTileMapComponent({
     this._columns = 16,
     this._rows = 12,
     this._tileSize = 32.0,
     List<int>? tiles,
-  }) {
+    this.tilesetPath = '',
+    this.tilesetColumns = 8,
+    this.tilesetTileSize = 16,
+    Map<int, TileKind>? tileKinds,
+  }) : tileKinds = tileKinds ?? {} {
     _tiles = tiles ?? List.filled(_columns * _rows, 0);
   }
 
   int get columns => _columns;
   set columns(int val) {
-    if (val <= 0) return;
-    _columns = val;
-    _resizeGrid();
+    if (val <= 0 || val == _columns) return;
+    _resizeGrid(val, _rows);
     notifyListeners();
   }
 
   int get rows => _rows;
   set rows(int val) {
-    if (val <= 0) return;
-    _rows = val;
-    _resizeGrid();
+    if (val <= 0 || val == _rows) return;
+    _resizeGrid(_columns, val);
     notifyListeners();
+  }
+
+  TileKind kindOf(int tileId) => tileKinds[tileId] ?? TileKind.solid;
+
+  void setKind(int tileId, TileKind kind) {
+    if (kind == TileKind.solid) {
+      tileKinds.remove(tileId);
+    } else {
+      tileKinds[tileId] = kind;
+    }
+    notifyListeners();
+  }
+
+  /// World-space origin (top-left corner of cell 0,0) and tile size.
+  (double, double, double) _worldGrid() {
+    final t = entity?.getComponent<Transform2DComponent>();
+    if (t == null) return (0, 0, _tileSize);
+    final o = t.worldPosition - t.anchorOffset;
+    return (o.x, o.y, _tileSize * t.worldScale.x);
+  }
+
+  /// Every non-empty tile whose rectangle overlaps [area] (world space).
+  /// Only the cells under [area] are visited, so this is cheap on huge maps.
+  List<TileHit> tilesIn(Rect area) {
+    final (ox, oy, ts) = _worldGrid();
+    if (ts <= 0) return const [];
+    final c0 = ((area.left - ox) / ts).floor().clamp(0, _columns - 1);
+    final c1 = ((area.right - ox) / ts).floor().clamp(0, _columns - 1);
+    final r0 = ((area.top - oy) / ts).floor().clamp(0, _rows - 1);
+    final r1 = ((area.bottom - oy) / ts).floor().clamp(0, _rows - 1);
+    if (area.right < ox || area.bottom < oy || area.left > ox + _columns * ts || area.top > oy + _rows * ts) {
+      return const [];
+    }
+    final hits = <TileHit>[];
+    for (var r = r0; r <= r1; r++) {
+      for (var c = c0; c <= c1; c++) {
+        final id = _tiles[r * _columns + c];
+        if (id <= 0) continue;
+        hits.add(TileHit(this, c, r, id, kindOf(id), Rect.fromLTWH(ox + c * ts, oy + r * ts, ts, ts)));
+      }
+    }
+    return hits;
+  }
+
+  /// World-space rectangle of cell ([col], [row]).
+  Rect cellRect(int col, int row) {
+    final (ox, oy, ts) = _worldGrid();
+    return Rect.fromLTWH(ox + col * ts, oy + row * ts, ts, ts);
+  }
+
+  /// Grid cell under a world position, or null if outside the map.
+  (int, int)? cellAt(double worldX, double worldY) {
+    final (ox, oy, ts) = _worldGrid();
+    final c = ((worldX - ox) / ts).floor();
+    final r = ((worldY - oy) / ts).floor();
+    if (c < 0 || r < 0 || c >= _columns || r >= _rows) return null;
+    return (c, r);
   }
 
   double get tileSize => _tileSize;
@@ -405,19 +518,21 @@ class FlameTileMapComponent extends EmberComponent {
 
   void setTile(int col, int row, int tileId) {
     if (col < 0 || col >= _columns || row < 0 || row >= _rows) return;
+    if (_tiles[row * _columns + col] == tileId) return;
     _tiles[row * _columns + col] = tileId;
     notifyListeners();
   }
 
-  void _resizeGrid() {
-    final newTiles = List.filled(_columns * _rows, 0);
-    for (int r = 0; r < _rows; r++) {
-      for (int c = 0; c < _columns; c++) {
-        if (c < _columns && r < _rows && (r * _columns + c) < _tiles.length) {
-          newTiles[r * _columns + c] = _tiles[r * _columns + c];
-        }
+  /// Changes the grid size, keeping every tile at the same (column, row).
+  void _resizeGrid(int newColumns, int newRows) {
+    final newTiles = List.filled(newColumns * newRows, 0);
+    for (int r = 0; r < newRows && r < _rows; r++) {
+      for (int c = 0; c < newColumns && c < _columns; c++) {
+        newTiles[r * newColumns + c] = _tiles[r * _columns + c];
       }
     }
+    _columns = newColumns;
+    _rows = newRows;
     _tiles = newTiles;
   }
 
@@ -456,6 +571,41 @@ class FlameTileMapComponent extends EmberComponent {
           max: 128.0,
           step: 8.0,
         ),
+        InspectableProperty<String>(
+          name: 'tilesetPath',
+          label: 'Tileset Image',
+          type: InspectableType.string,
+          getter: () => tilesetPath,
+          setter: (val) {
+            tilesetPath = val;
+            notifyListeners();
+          },
+          tooltip: 'assets/... image; tile ID n uses cell n-1',
+        ),
+        InspectableProperty<int>(
+          name: 'tilesetColumns',
+          label: 'Tileset Columns',
+          type: InspectableType.integer,
+          getter: () => tilesetColumns,
+          setter: (val) {
+            tilesetColumns = val.clamp(1, 256);
+            notifyListeners();
+          },
+          min: 1,
+          step: 1,
+        ),
+        InspectableProperty<int>(
+          name: 'tilesetTileSize',
+          label: 'Tileset Cell (px)',
+          type: InspectableType.integer,
+          getter: () => tilesetTileSize,
+          setter: (val) {
+            tilesetTileSize = val.clamp(1, 512);
+            notifyListeners();
+          },
+          min: 1,
+          step: 1,
+        ),
       ];
 
   @override
@@ -465,6 +615,10 @@ class FlameTileMapComponent extends EmberComponent {
       'rows': _rows,
       'tileSize': _tileSize,
       'tiles': _tiles,
+      if (tilesetPath.isNotEmpty) 'tilesetPath': tilesetPath,
+      'tilesetColumns': tilesetColumns,
+      'tilesetTileSize': tilesetTileSize,
+      if (tileKinds.isNotEmpty) 'tileKinds': {for (final e in tileKinds.entries) '${e.key}': e.value.name},
     };
   }
 
@@ -474,10 +628,22 @@ class FlameTileMapComponent extends EmberComponent {
     _rows = json['rows'] as int? ?? 12;
     _tileSize = (json['tileSize'] as num?)?.toDouble() ?? 32.0;
     final rawTiles = json['tiles'] as List<dynamic>?;
-    if (rawTiles != null) {
+    if (rawTiles != null && rawTiles.length == _columns * _rows) {
       _tiles = rawTiles.map((e) => (e as num).toInt()).toList();
     } else {
       _tiles = List.filled(_columns * _rows, 0);
+    }
+    tilesetPath = json['tilesetPath'] as String? ?? '';
+    tilesetColumns = (json['tilesetColumns'] as num?)?.toInt() ?? 8;
+    tilesetTileSize = (json['tilesetTileSize'] as num?)?.toInt() ?? 16;
+    tileKinds.clear();
+    final kinds = json['tileKinds'];
+    if (kinds is Map) {
+      for (final e in kinds.entries) {
+        final id = int.tryParse('${e.key}');
+        final kind = TileKind.values.where((k) => k.name == e.value).firstOrNull;
+        if (id != null && kind != null) tileKinds[id] = kind;
+      }
     }
     notifyListeners();
   }
@@ -489,6 +655,10 @@ class FlameTileMapComponent extends EmberComponent {
       rows: _rows,
       tileSize: _tileSize,
       tiles: List<int>.from(_tiles),
+      tilesetPath: tilesetPath,
+      tilesetColumns: tilesetColumns,
+      tilesetTileSize: tilesetTileSize,
+      tileKinds: Map.of(tileKinds),
     );
   }
 }

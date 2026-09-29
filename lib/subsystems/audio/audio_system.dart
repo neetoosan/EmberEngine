@@ -103,8 +103,28 @@ class AudioSystem with ChangeNotifier {
   Vector3 listenerForward = Vector3(0, 0, -1);
   Vector3 listenerUp = Vector3(0, 1, 0);
 
-  // Synthesizer event callback for external platform playback bindings
-  void Function(String soundType, double volume, double pitch, double pan)? onPlayProceduralSound;
+  /// Plays voices on real hardware (see AudioOutput). Null = silent mixer only
+  /// (tests, headless tools).
+  AudioBackend? backend;
+
+  AudioVoice? _music;
+
+  /// The currently playing background music, if any.
+  AudioVoice? get music => _music;
+
+  /// Starts looping background music from an audio file (e.g.
+  /// `assets/audio/theme.ogg`), replacing any music already playing.
+  AudioVoice playMusic(String clip, {double volume = 1.0}) {
+    if (_music != null && _music!.clip == clip && _music!.isPlaying) return _music!;
+    stopMusic();
+    return _music = play(clip: clip, category: AudioCategory.music, volume: volume, looping: true, duration: double.infinity);
+  }
+
+  void stopMusic() {
+    final m = _music;
+    _music = null;
+    if (m != null) stop(m);
+  }
 
   double get masterVolume => _masterVolume;
   set masterVolume(double val) {
@@ -203,10 +223,10 @@ class AudioSystem with ChangeNotifier {
 
     _activeVoices.add(voice);
 
-    // Trigger procedural audio synthesis if clip is procedural
+    // Hand the voice to the platform backend (procedural effect or audio file)
     final pan = is3D && position != null ? _calculatePan(position) : 0.0;
     final effectiveVol = calculateEffectiveVolume(voice);
-    onPlayProceduralSound?.call(clip, effectiveVol, pitch, pan);
+    backend?.play(voice, effectiveVol, pan);
 
     EmberEngine.instance.log('Audio Play: "$clip" ($category, vol: ${(effectiveVol * 100).toInt()}%)', source: 'Audio');
     notifyListeners();
@@ -229,19 +249,27 @@ class AudioSystem with ChangeNotifier {
   void stop(AudioVoice voice) {
     voice.isPlaying = false;
     _activeVoices.remove(voice);
+    backend?.stop(voice);
     notifyListeners();
   }
 
-  /// Stops all voices across all categories.
+  /// Stops all voices across all categories (including music).
   void stopAll() {
+    for (final v in _activeVoices) {
+      v.isPlaying = false;
+    }
     _activeVoices.clear();
+    _music = null;
+    backend?.stopAll();
     notifyListeners();
   }
 
   /// Stops all voices in a specific category.
   void stopCategory(AudioCategory category) {
-    _activeVoices.removeWhere((v) => v.category == category);
-    notifyListeners();
+    for (final v in _activeVoices.where((v) => v.category == category).toList()) {
+      stop(v);
+    }
+    if (category == AudioCategory.music) _music = null;
   }
 
   /// Master frame update: evaluates ducking, 3D attenuation, and voice lifetimes.
@@ -333,6 +361,14 @@ class AudioSystem with ChangeNotifier {
       listenerUp = Vector3(0, 1, 0);
     }
   }
+}
+
+/// Plays [AudioVoice]s on a real audio device.
+abstract class AudioBackend {
+  /// Starts [voice] (a procedural effect name or an `assets/...` audio file).
+  void play(AudioVoice voice, double volume, double pan);
+  void stop(AudioVoice voice);
+  void stopAll();
 }
 
 /// Buffer containing synthesized raw PCM audio samples.

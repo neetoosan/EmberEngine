@@ -7,8 +7,11 @@ import '../../core/engine_loop.dart';
 import '../../core/event_bus.dart';
 import '../../core/input.dart';
 import '../../core/transform2d.dart';
+import '../../editor/tile_brush.dart';
 import '../physics/character_controller2d.dart';
 import 'camera2d.dart';
+import 'flame_components.dart';
+import 'tilemap_editor.dart';
 import 'flame_game.dart';
 
 /// Interactive Viewport Widget for the 2D Flame Subsystem.
@@ -108,6 +111,16 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
       return;
     }
 
+    // Tile painting: left paints, right erases (middle still pans)
+    if (TileBrush.instance.enabled &&
+        (event.buttons == kPrimaryMouseButton || event.buttons == kSecondaryMouseButton) &&
+        tilemapTarget(widget.engine) != null) {
+      _paintErase = event.buttons == kSecondaryMouseButton;
+      _isPainting = true;
+      _paintAt(event.localPosition);
+      return;
+    }
+
     if (event.buttons == kPrimaryMouseButton) {
       final picked = _game.pickEntity(event.localPosition);
       widget.engine.selectEntity(picked);
@@ -130,6 +143,11 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
     _mousePos = event.localPosition;
     if (_isRunning) {
       _forwardGamePointer(event);
+      return;
+    }
+
+    if (_isPainting) {
+      _paintAt(event.localPosition);
       return;
     }
 
@@ -176,11 +194,47 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
       Input.onMouseUp(b);
     }
     _isDraggingEntity = false;
+    _isPainting = false;
     _lastPanPos = null;
   }
 
   void _handlePointerHover(PointerHoverEvent event) {
-    if (_isRunning) _forwardGamePointer(event);
+    if (_isRunning) {
+      _forwardGamePointer(event);
+      return;
+    }
+    _updateBrushPreview(event.localPosition);
+  }
+
+  // --- Tile painting ---
+
+  bool _isPainting = false;
+  bool _paintErase = false;
+
+  /// The tilemap cell under [screen], with its map.
+  (FlameTileMapComponent, int, int)? _cellUnder(Offset screen) {
+    final map = tilemapTarget(widget.engine)?.getComponent<FlameTileMapComponent>();
+    if (map == null) return null;
+    final w = _game.screenToWorld(screen);
+    final cell = map.cellAt(w.x, w.y);
+    return cell == null ? null : (map, cell.$1, cell.$2);
+  }
+
+  void _paintAt(Offset screen) {
+    final hit = _cellUnder(screen);
+    if (hit == null) return;
+    final (map, c, r) = hit;
+    map.setTile(c, r, _paintErase ? 0 : TileBrush.instance.tileId);
+    _updateBrushPreview(screen);
+  }
+
+  void _updateBrushPreview(Offset screen) {
+    Rect? rect;
+    if (TileBrush.instance.enabled) {
+      final hit = _cellUnder(screen);
+      if (hit != null) rect = hit.$1.cellRect(hit.$2, hit.$3);
+    }
+    if (rect != _game.brushRect) setState(() => _game.brushRect = rect);
   }
 
   void _handlePointerSignal(PointerSignalEvent event) {

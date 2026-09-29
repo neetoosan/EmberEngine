@@ -11,7 +11,7 @@ void main() {
   group('Ember Startup Hub & Template System Tests', () {
     test('TemplateCatalog has all 4 official starter templates', () {
       final templates = TemplateCatalog.templates;
-      expect(templates.length, 5);
+      expect(templates.length, 6);
 
       final types = templates.map((t) => t.type).toSet();
       expect(types, contains(ProjectTemplateType.platformer2d));

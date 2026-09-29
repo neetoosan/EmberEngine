@@ -2,6 +2,9 @@ import 'component.dart';
 import 'entity.dart';
 import 'inspectable.dart';
 import 'scene.dart';
+import '../subsystems/two_d/flame_components.dart' show TileHit;
+
+export '../subsystems/two_d/flame_components.dart' show TileHit, TileKind;
 
 /// User-facing gameplay script contract, mirroring Unity's MonoBehaviour.
 abstract class GameScript {
@@ -47,6 +50,13 @@ abstract class GameScript {
 
   /// Two solid hitboxes stopped touching.
   void onCollisionExit(EmberEntity other) {}
+
+  /// This character (Character Controller 2D) hit [tile] with its head while
+  /// jumping — e.g. to break a brick or open a "?" block.
+  void onHeadBump(TileHit tile) {}
+
+  /// This character is touching a [TileKind.hazard] tile (spikes, lava).
+  void onTileTouch(TileHit tile) {}
 }
 
 /// Factory signature for instantiating custom GameScripts by name.

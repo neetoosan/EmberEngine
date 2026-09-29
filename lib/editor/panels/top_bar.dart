@@ -20,6 +20,9 @@ class EditorTopBar extends StatelessWidget {
   final VoidCallback? onOpenDoctor;
   final VoidCallback? onExportGame;
 
+  /// Replaces the plain scene name (e.g. a menu to switch levels).
+  final Widget? sceneSelector;
+
   const EditorTopBar({
     super.key,
     required this.engine,
@@ -31,6 +34,7 @@ class EditorTopBar extends StatelessWidget {
     this.onOpenProjectHub,
     this.onOpenDoctor,
     this.onExportGame,
+    this.sceneSelector,
   });
 
   @override
@@ -90,15 +94,16 @@ class EditorTopBar extends StatelessWidget {
           Container(width: 1, height: 16, color: EmberTheme.borderMedium),
           const SizedBox(width: 12),
 
-          // 2. Active Scene Name
-          Text(
-            engine.activeScene.name,
-            style: const TextStyle(
-              color: EmberTheme.textSecondary,
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+          // 2. Active Scene (a scene/level menu when a project is open)
+          sceneSelector ??
+              Text(
+                engine.activeScene.name,
+                style: const TextStyle(
+                  color: EmberTheme.textSecondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
 
           const Spacer(),
 

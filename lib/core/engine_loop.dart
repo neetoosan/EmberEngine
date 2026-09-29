@@ -148,6 +148,7 @@ class EmberEngine with ChangeNotifier {
     if (_playState == PlayState.stopped) {
       // Save scene state for zero-loss restore upon Stop
       _savedSceneSnapshot = _activeScene.toJson();
+      _runningSceneJson = _savedSceneSnapshot;
       Input.reset();
       _activeScene.awake();
       _activeScene.start();
@@ -186,6 +187,7 @@ class EmberEngine with ChangeNotifier {
     _stopTicker();
     _playState = PlayState.stopped;
     _pendingSceneChange = null;
+    _runningSceneJson = null;
     _activeScene.isRunning = false;
     AudioSystem.instance.stopAll();
     Input.reset();
@@ -289,19 +291,43 @@ class EmberEngine with ChangeNotifier {
   /// Restarts the running game from the state it had when Play was pressed
   /// (e.g. after "Game Over"). Safe to call from scripts; applied after the frame.
   void restartScene() {
-    final snapshot = _savedSceneSnapshot;
-    if (snapshot == null) return;
-    _pendingSceneChange = () => _startRunningScene(EmberScene.fromJson(snapshot));
+    final json = _runningSceneJson ?? _savedSceneSnapshot;
+    if (json == null) return;
+    _pendingSceneChange = () => _startRunningScene(EmberScene.fromJson(json));
   }
 
   /// Switches the running game to [scene] (e.g. the next level). Safe to call
   /// from scripts; applied after the frame. Stop still restores the scene the
   /// editor had open when Play was pressed.
   void switchScene(EmberScene scene) {
-    _pendingSceneChange = () => _startRunningScene(scene);
+    final json = scene.toJson();
+    _pendingSceneChange = () => _startRunningScene(scene, json: json);
   }
 
-  void _startRunningScene(EmberScene scene) {
+  /// The game's scenes by name (provided by the editor or the player), used
+  /// by [loadLevel]. Values are scene JSON as saved in the project.
+  Map<String, Map<String, dynamic>> Function()? sceneLibrary;
+
+  /// Names of the scenes [loadLevel] can switch to.
+  List<String> get levelNames => sceneLibrary?.call().keys.toList() ?? const [];
+
+  /// Switches the running game to the project scene called [name]
+  /// (e.g. `loadLevel('Level 2')`). Returns false if there is no such scene.
+  bool loadLevel(String name) {
+    final json = sceneLibrary?.call()[name];
+    if (json == null) {
+      log('No scene named "$name" to load', severity: LogSeverity.warning, source: 'Runtime');
+      return false;
+    }
+    _pendingSceneChange = () => _startRunningScene(EmberScene.fromJson(json), json: json);
+    return true;
+  }
+
+  /// JSON of the scene currently being played, for [restartScene].
+  Map<String, dynamic>? _runningSceneJson;
+
+  void _startRunningScene(EmberScene scene, {Map<String, dynamic>? json}) {
+    if (json != null) _runningSceneJson = json;
     loadScene(scene);
     Input.reset();
     _physicsAccumulator = 0.0;

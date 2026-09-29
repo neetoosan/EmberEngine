@@ -27,6 +27,8 @@ void main(List<String> args) {
   WidgetsFlutterBinding.ensureInitialized();
   registerAllSubsystems();
   registerGameScripts();
+  // Real audio output is attached here (not in the widget) so widget tests stay silent
+  AudioOutput.instance.attach();
   runApp(EmberPlayerApp(project: _loadGame(args)));
 }
 
@@ -71,11 +73,13 @@ class _EmberPlayerAppState extends State<EmberPlayerApp> {
     super.initState();
     registerAllSubsystems();
     Input.bindHardwareKeyboard();
-    AudioOutput.instance.attach();
 
     final project = widget.project;
     SaveData.instance.open(project?.name ?? 'Ember Demo');
     if (project != null) {
+      // Every level of the game, captured before play so loadLevel always starts fresh
+      final levels = {for (final e in project.scenes.entries) e.key: e.value.toJson()};
+      _engine.sceneLibrary = () => levels;
       _engine.setMode(project.renderPipeline == RenderPipelineMode.twoD ? EngineMode.twoD : EngineMode.threeD);
       _engine.loadScene(project.activeScene);
     } else if (widget.initialScene != null) {

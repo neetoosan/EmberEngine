@@ -15,8 +15,11 @@ import '../subsystems/three_d/lighting.dart';
 import '../subsystems/three_d/material.dart';
 import '../subsystems/two_d/camera2d.dart';
 import '../subsystems/two_d/flame_components.dart';
+import '../subsystems/two_d/parallax.dart';
+import '../subsystems/two_d/sprite_animator.dart';
 import '../subsystems/ui/ui_text.dart';
 import '../templates/flappy_game.dart';
+import '../templates/quest_game.dart';
 
 /// Represents an entire game scene in Ember Engine.
 ///
@@ -354,6 +357,34 @@ class EmberScene with ChangeNotifier {
     return scene;
   }
 
+  /// An empty level to start from: in 2D a Camera 2D and a tilemap with a
+  /// floor; in 3D a light and a camera.
+  static EmberScene starterFor(String name, {required bool is2D}) {
+    _ensureCoreComponentsRegistered();
+    final scene = EmberScene(name: name);
+    if (is2D) {
+      scene.addEntity(EmberEntity(name: 'Camera')
+        ..addComponent(Transform2DComponent(position: Vector2(320, 180), size: Vector2.zero()))
+        ..addComponent(Camera2DComponent(designWidth: 640, designHeight: 360, backgroundColor: const Color(0xFF6CB4EE))));
+      final tiles = List<int>.filled(60 * 12, 0);
+      for (var c = 0; c < 60; c++) {
+        tiles[10 * 60 + c] = 1;
+        tiles[11 * 60 + c] = 1;
+      }
+      scene.addEntity(EmberEntity(name: 'Level')
+        ..addComponent(Transform2DComponent(size: Vector2.zero()))
+        ..addComponent(FlameTileMapComponent(columns: 60, rows: 12, tileSize: 32, tiles: tiles)));
+    } else {
+      scene.addEntity(EmberEntity(name: 'Directional Light')
+        ..addComponent(Transform3DComponent(position: Vector3(5, 10, 5), euler: Vector3(-45, -45, 0)))
+        ..addComponent(LightComponent(type: LightType.directional)));
+      scene.addEntity(EmberEntity(name: 'Main Camera')
+        ..addComponent(Transform3DComponent(position: Vector3(0, 3, 8), euler: Vector3(-15, 0, 0)))
+        ..addComponent(CameraComponent()));
+    }
+    return scene;
+  }
+
   static bool _registered = false;
   static void _ensureCoreComponentsRegistered() {
     if (_registered) return;
@@ -384,9 +415,12 @@ class EmberScene with ChangeNotifier {
     registerCharacterController3D();
     registerCharacterController2D();
     registerCamera2D();
+    registerParallax();
+    registerSpriteAnimator();
     registerUIComponents();
     registerStandardGameplayScripts();
     registerFlappyScripts();
+    registerQuestScripts();
   }
 }
 

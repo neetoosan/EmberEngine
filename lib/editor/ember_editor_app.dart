@@ -100,7 +100,7 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
       if (!quiet) _notify('Nothing to save — open or create a project from the Project Hub.', isError: true);
       return null;
     }
-    project.scenes[project.defaultSceneName] = _engine.editableScene;
+    project.scenes[_editingSceneName ?? project.defaultSceneName] = _engine.editableScene;
     if (!ProjectStorage.isSupported) return project;
 
     try {
@@ -142,13 +142,144 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
     if (mounted) setState(() {});
   }
 
+  // --- Scenes / levels ---
+
+  /// Key in [EmberProject.scenes] of the scene open in the editor.
+  String? _editingSceneName;
+
+  /// Scene JSON by name for `EmberEngine.loadLevel`; the scene being edited is
+  /// taken as it was when Play was pressed.
+  Map<String, Map<String, dynamic>> _sceneLibrary() {
+    final project = _currentProject;
+    if (project == null) return {};
+    return {
+      for (final e in project.scenes.entries)
+        e.key: e.key == _editingSceneName ? _engine.editableScene.toJson() : e.value.toJson(),
+    };
+  }
+
+  /// Opens another scene of the project for editing (keeping the current one).
+  void _openScene(String name) {
+    final project = _currentProject;
+    if (project == null || !project.scenes.containsKey(name) || name == _editingSceneName) return;
+    _engine.stop();
+    // Store a copy: loading the next scene destroys the one on screen.
+    if (_editingSceneName != null) {
+      project.scenes[_editingSceneName!] = EmberScene.fromJson(_engine.activeScene.toJson());
+    }
+    setState(() => _editingSceneName = name);
+    _engine.loadScene(EmberScene.fromJson(project.scenes[name]!.toJson()));
+  }
+
+  Future<void> _newScene(BuildContext ctx) async {
+    final project = _currentProject;
+    if (project == null) return;
+    var n = project.scenes.length + 1;
+    while (project.scenes.containsKey('Level $n')) {
+      n++;
+    }
+    final controller = TextEditingController(text: 'Level $n');
+    final name = await showDialog<String>(
+      context: ctx,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: EmberTheme.panelBg,
+        title: const Text('New Scene', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Scene name'),
+          onSubmitted: (v) => Navigator.of(dctx).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(dctx).pop(controller.text.trim()), child: const Text('Create')),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    if (project.scenes.containsKey(name)) {
+      _notify('A scene called "$name" already exists', isError: true);
+      return;
+    }
+    project.scenes[name] = EmberScene.starterFor(name, is2D: _engine.mode == EngineMode.twoD);
+    _openScene(name);
+    _notify('Created scene "$name"');
+  }
+
+  void _setStartScene() {
+    final project = _currentProject;
+    final name = _editingSceneName;
+    if (project == null || name == null) return;
+    setState(() => project.defaultSceneName = name);
+    _notify('"$name" is now the scene the game starts in');
+  }
+
+  void _deleteScene() {
+    final project = _currentProject;
+    final name = _editingSceneName;
+    if (project == null || name == null || project.scenes.length < 2) return;
+    project.scenes.remove(name);
+    if (project.defaultSceneName == name) project.defaultSceneName = project.scenes.keys.first;
+    _editingSceneName = null;
+    _openScene(project.defaultSceneName);
+    _notify('Deleted scene "$name"');
+  }
+
+  Widget? _buildSceneMenu(BuildContext ctx) {
+    final project = _currentProject;
+    if (project == null) return null;
+    final current = _editingSceneName ?? project.defaultSceneName;
+    return PopupMenuButton<String>(
+      tooltip: 'Scenes / levels',
+      color: EmberTheme.surfaceCard,
+      onSelected: (v) {
+        switch (v) {
+          case '\u0000new':
+            _newScene(ctx);
+          case '\u0000start':
+            _setStartScene();
+          case '\u0000delete':
+            _deleteScene();
+          default:
+            _openScene(v);
+        }
+      },
+      itemBuilder: (_) => [
+        for (final name in project.scenes.keys)
+          PopupMenuItem(
+            value: name,
+            child: Text(
+              '${name == current ? '● ' : '   '}$name${name == project.defaultSceneName ? '  (start)' : ''}',
+              style: const TextStyle(fontSize: 11),
+            ),
+          ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: '\u0000new', child: Text('+ New scene…', style: TextStyle(fontSize: 11))),
+        const PopupMenuItem(value: '\u0000start', child: Text('Set as start scene', style: TextStyle(fontSize: 11))),
+        if (project.scenes.length > 1)
+          const PopupMenuItem(value: '\u0000delete', child: Text('Delete this scene', style: TextStyle(fontSize: 11))),
+      ],
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(current, style: const TextStyle(color: EmberTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w500)),
+          const Icon(Icons.arrow_drop_down, size: 16, color: EmberTheme.textSecondary),
+        ],
+      ),
+    );
+  }
+
   void _onOpenProject(EmberProject project) {
     _engine.stop();
     // Sprites resolve against the project folder (template art falls back to the engine bundle).
     EmberAssets.instance.root = ProjectStorage.hasDiskLocation(project) ? project.path : null;
     SaveData.instance.open('${project.name} (editor)');
+    _engine.sceneLibrary = _sceneLibrary;
     setState(() {
       _currentProject = project;
+      _editingSceneName = project.scenes.containsKey(project.defaultSceneName)
+          ? project.defaultSceneName
+          : (project.scenes.isEmpty ? project.defaultSceneName : project.scenes.keys.first);
       final targetMode = project.renderPipeline == RenderPipelineMode.twoD
           ? EngineMode.twoD
           : EngineMode.threeD;
@@ -240,6 +371,7 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
                     onExportGame: ProjectStorage.isSupported
                         ? () => ExportGameDialog.show(appContext, prepareProject: _saveProject)
                         : null,
+                    sceneSelector: _buildSceneMenu(appContext),
                   ),
 
                   // 2. Middle Workstation Area (Hierarchy + Adaptive Viewport + Inspector)

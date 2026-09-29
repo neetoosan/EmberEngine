@@ -10,6 +10,7 @@ import '../particles/particle_system.dart';
 import '../ui/ui_text.dart';
 import 'camera2d.dart';
 import 'flame_components.dart';
+import 'parallax.dart';
 
 /// Flame game implementation for Ember Engine's 2D subsystem.
 ///
@@ -33,6 +34,9 @@ class EmberFlameGame extends FlameGame {
 
   /// The game camera's view while running (null in the editor view).
   CameraView2D? _gameView;
+
+  /// Tile-brush outline under the cursor (world space), editor only.
+  Rect? brushRect;
 
   /// True when the frame is being drawn through the scene's Camera 2D.
   bool get isGameView => _gameView != null;
@@ -73,6 +77,16 @@ class EmberFlameGame extends FlameGame {
     if (camera != null && !isRunning) _drawCameraFrame(canvas, camera);
     _drawEntities(canvas, showHitboxes && !isRunning);
     if (!isRunning) _drawSelectionGizmo(canvas);
+    final brush = brushRect;
+    if (brush != null && !isRunning) {
+      canvas.drawRect(
+        brush,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2 / zoom
+          ..color = const Color(0xFF00F5D4),
+      );
+    }
     canvas.restore();
 
     // UI text previews inside the camera frame (or the whole view without a camera)
@@ -147,53 +161,91 @@ class EmberFlameGame extends FlameGame {
         return za.compareTo(zb);
       });
 
+    // Visible world area; anything outside it is skipped (long levels stay fast)
+    final worldClip = canvas.getLocalClipBounds();
+    final camera = Camera2DComponent.findIn(engine.activeScene);
+
     for (final entity in sorted) {
       if (!entity.enabled) continue;
       final t2d = entity.getComponent<Transform2DComponent>();
       if (t2d == null) continue;
 
-      canvas.save();
-      final pos = t2d.worldPosition;
+      var pos = t2d.worldPosition;
       final rot = t2d.worldRotation;
       final scale = t2d.worldScale;
       final size = t2d.size;
       final anchorOffset = t2d.anchorOffset;
-
-      canvas.translate(pos.x, pos.y);
-      canvas.rotate(rot);
-      canvas.scale(scale.x, scale.y);
-      canvas.translate(-anchorOffset.x, -anchorOffset.y);
-
-      // Draw TileMap if present (empty-cell outlines only while editing)
       final tilemap = entity.getComponent<FlameTileMapComponent>();
-      if (tilemap != null) {
-        _renderTileMap(canvas, tilemap, outlineEmpty: engine.playState == PlayState.stopped);
-      }
 
-      // Draw Sprite, or (in the editor only) a placeholder so invisible entities can be found
-      final sprite = entity.getComponent<FlameSpriteComponent>();
-      if (sprite != null) {
-        _renderSprite(canvas, sprite, size);
-      } else if (tilemap == null && engine.playState == PlayState.stopped && size.x > 0 && size.y > 0) {
-        _renderEntityPlaceholder(canvas, entity.name, size);
+      // Parallax layers move slower than the camera (depth), optionally tiling sideways
+      final parallax = entity.getComponent<ParallaxLayerComponent>();
+      final hasParallax = parallax != null && parallax.enabled;
+      if (hasParallax && camera != null) {
+        final c = camera.position;
+        pos = pos + vm.Vector2(c.x * (1 - parallax.factorX), c.y * (1 - parallax.factorY));
       }
+      final copyWidth = size.x * scale.x.abs();
+      final repeat = hasParallax && parallax.repeatX && copyWidth > 0;
 
-      // Draw Hitbox outlines
-      if (drawHitboxes) {
-        final hitbox = entity.getComponent<FlameHitbox2DComponent>();
-        if (hitbox != null && hitbox.debugDraw) {
-          _renderHitbox(canvas, hitbox, size);
+      if (tilemap == null && !repeat) {
+        final ext = 2 * (size.x * scale.x.abs() + size.y * scale.y.abs()) + 1;
+        if (!worldClip.overlaps(Rect.fromLTRB(pos.x - ext, pos.y - ext, pos.x + ext, pos.y + ext))) {
+          _drawParticlesOf(canvas, entity);
+          continue;
         }
       }
 
-      canvas.restore();
-
-      // Draw 2D Particles. They are simulated in world space, so draw them
-      // outside the entity's local transform.
-      final emitter = entity.getComponent<ParticleEmitter2DComponent>();
-      if (emitter != null && emitter.enabled) {
-        _renderParticles2D(canvas, emitter);
+      final offsets = <double>[0];
+      if (repeat) {
+        offsets.clear();
+        final first = ((worldClip.left - pos.x) / copyWidth).floor() - 1;
+        final last = ((worldClip.right - pos.x) / copyWidth).ceil() + 1;
+        for (var k = first; k <= last; k++) {
+          offsets.add(k * copyWidth);
+        }
       }
+
+      for (final dx in offsets) {
+        canvas.save();
+        canvas.translate(pos.x + dx, pos.y);
+        canvas.rotate(rot);
+        canvas.scale(scale.x, scale.y);
+        canvas.translate(-anchorOffset.x, -anchorOffset.y);
+
+        // Draw TileMap if present (empty-cell outlines only while editing)
+        if (tilemap != null) {
+          _renderTileMap(canvas, tilemap, outlineEmpty: engine.playState == PlayState.stopped);
+        }
+
+        // Draw Sprite, or (in the editor only) a placeholder so invisible entities can be found
+        final sprite = entity.getComponent<FlameSpriteComponent>();
+        if (sprite != null) {
+          _renderSprite(canvas, sprite, size);
+        } else if (tilemap == null && engine.playState == PlayState.stopped && size.x > 0 && size.y > 0) {
+          _renderEntityPlaceholder(canvas, entity.name, size);
+        }
+
+        // Draw Hitbox outlines
+        if (drawHitboxes) {
+          final hitbox = entity.getComponent<FlameHitbox2DComponent>();
+          if (hitbox != null && hitbox.debugDraw) {
+            _renderHitbox(canvas, hitbox, size);
+          }
+        }
+
+        canvas.restore();
+      }
+
+      _drawParticlesOf(canvas, entity);
+    }
+  }
+
+  /// 2D particles are simulated in world space, so they are drawn outside the
+  /// entity's local transform.
+  void _drawParticlesOf(Canvas canvas, EmberEntity entity) {
+    final emitter = entity.getComponent<ParticleEmitter2DComponent>();
+    if (emitter != null && emitter.enabled) {
+      _renderParticles2D(canvas, emitter);
     }
   }
 
@@ -206,29 +258,43 @@ class EmberFlameGame extends FlameGame {
   }
 
   void _renderTileMap(Canvas canvas, FlameTileMapComponent tilemap, {required bool outlineEmpty}) {
+    final ts = tilemap.tileSize;
     final tilePaint = Paint()..style = PaintingStyle.fill;
     final strokePaint = Paint()
       ..color = const Color(0xFF282C37)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
+    final tileset = tilemap.tilesetPath.isEmpty ? null : EmberAssets.instance.image(tilemap.tilesetPath);
+    final imagePaint = Paint()
+      ..isAntiAlias = false
+      ..filterQuality = FilterQuality.none;
 
-    for (int r = 0; r < tilemap.rows; r++) {
-      for (int c = 0; c < tilemap.columns; c++) {
+    // Only the cells inside the visible area are drawn
+    final clip = canvas.getLocalClipBounds();
+    final c0 = (clip.left / ts).floor().clamp(0, tilemap.columns);
+    final c1 = (clip.right / ts).ceil().clamp(0, tilemap.columns);
+    final r0 = (clip.top / ts).floor().clamp(0, tilemap.rows);
+    final r1 = (clip.bottom / ts).ceil().clamp(0, tilemap.rows);
+
+    for (int r = r0; r < r1; r++) {
+      for (int c = c0; c < c1; c++) {
         final tid = tilemap.getTile(c, r);
-        final rect = Rect.fromLTWH(
-          c * tilemap.tileSize,
-          r * tilemap.tileSize,
-          tilemap.tileSize,
-          tilemap.tileSize,
-        );
+        final rect = Rect.fromLTWH(c * ts, r * ts, ts, ts);
 
         if (tid > 0) {
-          // Palette color representation based on tile ID
-          final hue = (tid * 45.0) % 360.0;
-          tilePaint.color = HSLColor.fromAHSL(0.85, hue, 0.6, 0.45).toColor();
-          canvas.drawRect(rect, tilePaint);
+          if (tileset != null) {
+            final cell = tilemap.tilesetTileSize.toDouble();
+            final i = tid - 1;
+            final src = Rect.fromLTWH((i % tilemap.tilesetColumns) * cell, (i ~/ tilemap.tilesetColumns) * cell, cell, cell);
+            canvas.drawImageRect(tileset, src, rect, imagePaint);
+          } else {
+            // Palette color representation based on tile ID
+            final hue = (tid * 45.0) % 360.0;
+            tilePaint.color = HSLColor.fromAHSL(0.85, hue, 0.6, 0.45).toColor();
+            canvas.drawRect(rect, tilePaint);
+          }
         }
-        if (tid > 0 || outlineEmpty) canvas.drawRect(rect, strokePaint);
+        if ((tid > 0 && tileset == null) || outlineEmpty) canvas.drawRect(rect, strokePaint);
       }
     }
   }

@@ -18,6 +18,8 @@ import '../../subsystems/physics/character_controller3d.dart';
 import '../../subsystems/physics/character_controller2d.dart';
 import '../../subsystems/particles/particle_system.dart';
 import '../../subsystems/two_d/camera2d.dart';
+import '../../subsystems/two_d/parallax.dart';
+import '../../subsystems/two_d/sprite_animator.dart';
 import '../../subsystems/ui/ui_text.dart';
 import '../hub/project_assets.dart';
 import '../theme/ember_theme.dart';
@@ -1546,6 +1548,12 @@ class _InspectorPanelState extends State<InspectorPanel> {
           case 'UIText':
             entity.addComponent(UITextComponent());
             break;
+          case 'SpriteAnimator':
+            entity.addComponent(SpriteAnimatorComponent(clips: 'idle=0; run=1-3@10; jump=4'));
+            break;
+          case 'Parallax':
+            entity.addComponent(ParallaxLayerComponent());
+            break;
         }
         setState(() {});
       },
@@ -1567,6 +1575,8 @@ class _InspectorPanelState extends State<InspectorPanel> {
         PopupMenuItem(value: 'ParticleEmitter2D', child: Text('Particle Emitter 2D', style: TextStyle(fontSize: 11))),
         PopupMenuItem(value: 'Camera2D', child: Text('Camera 2D', style: TextStyle(fontSize: 11))),
         PopupMenuItem(value: 'UIText', child: Text('UI Text (on-screen)', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'SpriteAnimator', child: Text('Sprite Animator', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'Parallax', child: Text('Parallax Layer', style: TextStyle(fontSize: 11))),
         PopupMenuDivider(height: 1),
         PopupMenuItem(enabled: false, child: Text('--- Core Subsystems ---', style: TextStyle(fontSize: 10, color: EmberTheme.textMuted))),
         PopupMenuItem(value: 'AudioSource', child: Text('Audio Source', style: TextStyle(fontSize: 11))),

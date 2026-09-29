@@ -11,6 +11,7 @@ import '../subsystems/physics/character_controller2d.dart';
 import '../subsystems/physics/character_controller3d.dart';
 import '../subsystems/physics/physics_world3d.dart';
 import '../subsystems/two_d/flame_components.dart';
+import '../subsystems/two_d/sprite_animator.dart';
 
 /// Standard First-Person Shooter (FPS) Player Character Script.
 ///
@@ -171,6 +172,10 @@ class Platformer2DController extends GameScript {
         sprite.flipX = false;
       }
     }
+
+    // Drive idle / run / jump clips when a Sprite Animator is attached
+    getComponent<SpriteAnimatorComponent>()
+        ?.play(!cc.isGrounded ? 'jump' : (cc.velocity.x.abs() > 20 ? 'run' : 'idle'));
   }
 }
 
@@ -265,10 +270,65 @@ class Collectible extends GameScript {
   }
 }
 
+/// Walking enemy: patrols left and right on a Character Controller 2D,
+/// turning at walls and (optionally) at ledges. Tag it `enemy` so a player
+/// script can recognise it; call [squash] when the player stomps it.
+///
+/// Uses a Sprite Animator's `walk` and `squashed` clips when present; the
+/// sprite art is assumed to face left.
+class PatrolWalker extends GameScript {
+  int direction = -1;
+  bool turnAtLedges = true;
+  bool squashed = false;
+  double _squashTime = 0;
+
+  @override
+  void onUpdate(double dt) {
+    final cc = getComponent<CharacterController2DComponent>();
+    final t = getComponent<Transform2DComponent>();
+    if (cc == null || t == null) return;
+    final animator = getComponent<SpriteAnimatorComponent>();
+
+    if (squashed) {
+      _squashTime += dt;
+      if (_squashTime > 0.5) destroy();
+      return;
+    }
+
+    cc.updateMovement(horizontalInput: direction.toDouble(), isJumpPressed: false, isJumpJustPressed: false, dt: dt);
+    if (cc.hitWall) {
+      direction = -direction;
+    } else if (turnAtLedges && cc.isGrounded) {
+      final left = t.worldPosition.x - t.anchorOffset.x;
+      final width = t.size.x * t.scale.x;
+      final frontX = direction > 0 ? left + width + 2 : left - 2;
+      final feetY = t.worldPosition.y - t.anchorOffset.y + t.size.y * t.scale.y;
+      // Turn back at ledges and in front of spikes/lava
+      if (!cc.hasGroundAt(frontX, feetY + 4) || cc.hasHazardAt(frontX, feetY - 8)) direction = -direction;
+    }
+
+    getComponent<FlameSpriteComponent>()?.flipX = direction > 0;
+    animator?.play('walk');
+
+    // Fell out of the level (into a pit): clean up
+    if (t.worldPosition.y > 5000) destroy();
+  }
+
+  /// Flattens the enemy: it stops, stops hurting the player and disappears shortly after.
+  void squash() {
+    if (squashed) return;
+    squashed = true;
+    getComponent<FlameHitbox2DComponent>()?.enabled = false;
+    getComponent<SpriteAnimatorComponent>()?.play('squashed');
+    AudioSystem.instance.playProcedural('hit', volume: 0.7, pitch: 1.3);
+  }
+}
+
 /// Registers standard gameplay scripts into global ScriptRegistry.
 void registerStandardGameplayScripts() {
   ScriptRegistry.register('FPS Player Controller', () => FPSPlayerController());
   ScriptRegistry.register('Platformer 2D Controller', () => Platformer2DController());
   ScriptRegistry.register('Procedural Rotator', () => ProceduralRotator());
   ScriptRegistry.register('Collectible', () => Collectible());
+  ScriptRegistry.register('Patrol Walker', () => PatrolWalker());
 }

@@ -25,6 +25,7 @@ The **Project Hub** opens first. Pick a starter template:
 
 | Template | What you get when you press Play |
 |---|---|
+| Ember Quest | A Mario-style platformer: 2 levels, stomp slimes, "?" blocks, bricks, power berry, spikes, pits, lives, score, music |
 | Flappy Arcade | A complete Flappy Bird-style game: flap between random pipes, score, best score, restart |
 | 3D FPS Arena | First-person movement, mouse-look, shooting a target bot |
 | 2D Platformer Adventure | Tile platforms, jumping, collectable coins |
@@ -49,7 +50,9 @@ New projects are saved to `Documents/EmberProjects/<Project Name>/`.
 While the game runs, keys go to the game:
 
 - **3D FPS**: `WASD` move, mouse look, click or `F` fire, `Space` jump, `Shift` sprint.
-- **2D platformer**: `A`/`D` or arrows move; `Space`, `W` or `Up` jump.
+- **2D platformer / Ember Quest**: `A`/`D` or arrows move; `Space`, `W` or `Up`
+  jump (hold for higher); `Shift` run. Land on slimes to squash them, hit
+  "?" blocks from below, eat the berry to grow (big heroes break bricks).
 
 ## Project folder format
 
@@ -106,6 +109,29 @@ class Enemy extends GameScript {
 - **Camera 2D:** set a design size (e.g. 288×512); the game scales to any window
   with bars. Optional follow target and level bounds. Its frame is outlined in the editor.
 - **UI Text:** on-screen text (score, messages) anchored to the screen.
+- **Sprite Animator:** named clips on a sprite sheet, written like
+  `idle=0-1@3; run=2-4@12; jump=5; die=6@1!` (`!` = play once). Scripts call
+  `animator.play('run')`; the Platformer 2D Controller does this automatically.
+- **Parallax Layer:** backgrounds that scroll slower than the camera and repeat sideways.
+
+## Building levels (platformers)
+
+- **Paint tiles:** open the bottom drawer's **Tilemap** tab, pick a tile (turns
+  on Paint), then left-drag in the 2D view to paint and right-drag to erase.
+  Set the tilemap's *Tileset Image* to draw tiles from your own art.
+- **Tile behaviour** (per tile ID, in the palette): Solid, One-way platform,
+  Hazard, Breakable brick, "?" block, Used block, Decoration.
+  Scripts on the player get `onHeadBump(tile)` (bricks, "?" blocks — call
+  `tile.setTile(0)` to break one) and `onTileTouch(tile)` (hazards).
+- **Enemies:** the built-in `Patrol Walker` script walks back and forth on a
+  Character Controller 2D, turning at walls and ledges; `squash()` it when stomped.
+- **Levels:** the scene menu next to the Ember logo creates/switches scenes and
+  sets the start scene. From a script: `EmberEngine.instance.loadLevel('Level 2')`;
+  `restartScene()` replays the current level. Exported games contain every scene.
+- **Music:** `AudioSystem.instance.playMusic('assets/audio/theme.ogg')` (loops),
+  or an Audio Source with *looping* + *play on awake*. WAV, MP3 and OGG work.
+- Long levels are fine: only tiles near the camera are drawn and only tiles
+  near a character are collision-checked.
 
 ## Export a standalone game
 

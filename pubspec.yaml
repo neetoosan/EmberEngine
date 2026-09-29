@@ -65,6 +65,7 @@ flutter:
   # Built-in template art (regenerate with: dart run tool/generate_template_art.dart)
   assets:
     - assets/templates/flappy/
+    - assets/templates/quest/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

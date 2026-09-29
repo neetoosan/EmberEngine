@@ -115,35 +115,54 @@ class CharacterController2DComponent extends EmberComponent {
     // 5. Apply Gravity (always; ground contact is re-detected every frame)
     _velocity.y += gravity * dt;
 
-    // 6. Integrate Position one axis at a time, colliding with solid tiles
+    if (horizontalInput > 0.1) _facing = 1;
+    if (horizontalInput < -0.1) _facing = -1;
+
+    // 6. Integrate Position one axis at a time against the tiles near the character
     final w = t2d.size.x * t2d.scale.x;
     final h = t2d.size.y * t2d.scale.y;
     final anchor = t2d.anchorOffset;
-    final solids = _solidTileRects();
+    final prevBottom = t2d.position.y - anchor.y + h;
     _isGrounded = false;
+    _hitWall = false;
 
     var x = t2d.position.x + _velocity.x * dt;
     var y = t2d.position.y;
-    for (final r in solids) {
-      if (!_overlaps(r, x - anchor.x, y - anchor.y, w, h)) continue;
+    final reach = (_velocity.x.abs() + _velocity.y.abs()) * dt + 2;
+    final nearby = _tilesNear(Rect.fromLTWH(t2d.position.x - anchor.x, t2d.position.y - anchor.y, w, h).inflate(reach));
+
+    for (final tile in nearby) {
+      if (!tile.kind.blocks || !_overlaps(tile.rect, x - anchor.x, y - anchor.y, w, h)) continue;
       if (_velocity.x > 0) {
-        x = r.left - w + anchor.x;
+        x = tile.rect.left - w + anchor.x;
       } else if (_velocity.x < 0) {
-        x = r.right + anchor.x;
+        x = tile.rect.right + anchor.x;
       }
       _velocity.x = 0.0;
+      _hitWall = true;
     }
 
     y += _velocity.y * dt;
-    for (final r in solids) {
-      if (!_overlaps(r, x - anchor.x, y - anchor.y, w, h)) continue;
-      if (_velocity.y > 0) {
+    final bumped = <TileHit>[];
+    final movingUp = _velocity.y < 0;
+    for (final tile in nearby) {
+      if (!_overlaps(tile.rect, x - anchor.x, y - anchor.y, w, h)) continue;
+      final r = tile.rect;
+      if (tile.kind.blocks) {
+        if (_velocity.y > 0) {
+          y = r.top - h + anchor.y;
+          _isGrounded = true;
+        } else if (_velocity.y < 0) {
+          y = r.bottom + anchor.y;
+          bumped.add(tile);
+        }
+        _velocity.y = 0.0;
+      } else if (tile.kind == TileKind.oneWay && _velocity.y > 0 && prevBottom <= r.top + 0.5) {
+        // Platforms you can jump up through but stand on
         y = r.top - h + anchor.y;
         _isGrounded = true;
-      } else if (_velocity.y < 0) {
-        y = r.bottom + anchor.y;
+        _velocity.y = 0.0;
       }
-      _velocity.y = 0.0;
     }
 
     // 7. Fallback world floor at [groundY]
@@ -155,6 +174,54 @@ class CharacterController2DComponent extends EmberComponent {
     }
 
     t2d.position = vm.Vector2(x, y);
+
+    // 8. Events: the block most directly overhead was bumped; hazards touched
+    final self = entity;
+    if (self != null) {
+      if (movingUp && bumped.isNotEmpty) {
+        final cx = x - anchor.x + w / 2;
+        bumped.sort((a, b) => (a.rect.center.dx - cx).abs().compareTo((b.rect.center.dx - cx).abs()));
+        final hit = bumped.first;
+        self.notifyScripts((s) => s.onHeadBump(hit));
+      }
+      // Hazards use a slightly smaller body: grazing the edge of a spike tile
+      // (whose art rarely fills the whole cell) should not count as a hit.
+      final body = Rect.fromLTWH(x - anchor.x, y - anchor.y, w, h).deflate(hazardForgiveness);
+      for (final tile in nearby.followedBy(_tilesNear(body.inflate(1)))) {
+        if (tile.kind == TileKind.hazard && tile.rect.overlaps(body)) {
+          self.notifyScripts((s) => s.onTileTouch(tile));
+        }
+      }
+    }
+  }
+
+  /// Pixels trimmed from each side of the character when checking hazard tiles.
+  double hazardForgiveness = 4.0;
+
+  int _facing = 1;
+  bool _hitWall = false;
+
+  /// 1 when last moving right, -1 when last moving left.
+  int get facing => _facing;
+  set facing(int value) => _facing = value < 0 ? -1 : 1;
+
+  /// True if horizontal movement was blocked by a wall this frame.
+  bool get hitWall => _hitWall;
+
+  /// True if a tile a character can stand on (solid or one-way) covers the
+  /// world point ([x], [y]) — e.g. to check for a ledge ahead.
+  bool hasGroundAt(double x, double y) =>
+      _tilesNear(Rect.fromLTWH(x - 0.5, y - 0.5, 1, 1)).any((t) => t.kind.blocks || t.kind == TileKind.oneWay);
+
+  /// True if a hazard tile (spikes, lava) covers the world point ([x], [y]).
+  bool hasHazardAt(double x, double y) =>
+      _tilesNear(Rect.fromLTWH(x - 0.5, y - 0.5, 1, 1)).any((t) => t.kind == TileKind.hazard);
+
+  /// Launches the character upward (e.g. after stomping an enemy or a spring).
+  void bounce(double strength) {
+    _velocity.y = -strength;
+    _isGrounded = false;
+    _coyoteTimer = 0.0;
   }
 
   static bool _overlaps(Rect r, double left, double top, double w, double h) {
@@ -165,27 +232,18 @@ class CharacterController2DComponent extends EmberComponent {
         top < r.bottom - eps;
   }
 
-  /// World-space rectangles of every non-empty tile in the scene's tilemaps.
-  List<Rect> _solidTileRects() {
+  /// Non-empty tiles of every tilemap in the scene that overlap [area].
+  List<TileHit> _tilesNear(Rect area) {
     final scene = entity?.scene;
     if (scene == null) return const [];
-    final rects = <Rect>[];
+    final hits = <TileHit>[];
     for (final e in scene.allEntities) {
       if (!e.enabled) continue;
       final map = e.getComponent<FlameTileMapComponent>();
-      final t = e.getComponent<Transform2DComponent>();
-      if (map == null || t == null || !map.enabled) continue;
-      final origin = t.worldPosition - t.anchorOffset;
-      final ts = map.tileSize * t.worldScale.x;
-      for (int r = 0; r < map.rows; r++) {
-        for (int c = 0; c < map.columns; c++) {
-          if (map.getTile(c, r) > 0) {
-            rects.add(Rect.fromLTWH(origin.x + c * ts, origin.y + r * ts, ts, ts));
-          }
-        }
-      }
+      if (map == null || !map.enabled || !e.hasComponent<Transform2DComponent>()) continue;
+      hits.addAll(map.tilesIn(area));
     }
-    return rects;
+    return hits;
   }
 
   @override

@@ -16,10 +16,12 @@ import '../../subsystems/particles/particle_system.dart';
 import '../../subsystems/audio/audio_component.dart';
 import '../../subsystems/audio/audio_system.dart';
 import '../../templates/flappy_game.dart';
+import '../../templates/quest_game.dart';
 import 'project_manifest.dart';
 
 /// Identifier enum for built-in starter templates.
 enum ProjectTemplateType {
+  quest,
   flappy,
   platformer2d,
   fps3d,
@@ -71,6 +73,12 @@ class ProjectTemplate {
 
     // Build template specific scene & scripts
     switch (type) {
+      case ProjectTemplateType.quest:
+        project.scenes['Level 1'] = buildQuestLevel1();
+        project.scenes['Level 2'] = buildQuestLevel2();
+        project.defaultSceneName = 'Level 1';
+        project.assets.addAll(Quest.assetFiles);
+        break;
       case ProjectTemplateType.flappy:
         project.scenes['MainScene'] = buildFlappyScene();
         // Pipes are spawned by script, so list their art explicitly
@@ -516,6 +524,23 @@ class TemplateCatalog {
         'Kinematic 2D Character with Coyote Time',
         'Animated sprite sheets & jump bursts',
         'Collectable coins with sound FX',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.quest,
+      title: 'Ember Quest',
+      subtitle: 'Mario-style Side-Scrolling Platformer',
+      description:
+          'Two complete levels: run and jump, stomp slimes, bump "?" blocks for coins and a power berry, break bricks when big, dodge spikes and pits, and reach the flag. Score, coins, lives, music and level progression included.',
+      icon: Icons.castle_rounded,
+      accentColor: Color(0xFF0F766E),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Platformer', 'Levels', 'Pixel art', 'Music'],
+      features: [
+        'Stomp enemies, power-up, lives & score',
+        '"?" blocks, breakable bricks, one-way planks, spikes',
+        'Tileset level you can repaint in the editor',
+        'Two levels linked by a goal flag, chiptune loop',
       ],
     ),
     ProjectTemplate(
