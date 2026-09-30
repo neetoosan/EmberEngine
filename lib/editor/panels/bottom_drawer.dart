@@ -14,7 +14,6 @@ import '../../subsystems/two_d/tilemap_editor.dart';
 import '../theme/ember_theme.dart';
 import '../hub/project_assets.dart';
 import '../hub/project_manifest.dart';
-import 'script_editor_panel.dart';
 
 /// Bottom Drawer containing Console Logger, Asset Browser, Tilemap Palette, and Script Editor.
 ///
@@ -43,10 +42,14 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
   String _searchFilter = '';
   final TextEditingController _cmdController = TextEditingController();
 
+  /// Drawer height; drag its top edge to resize, double-click to maximise.
+  double _height = 250;
+  static const double _minHeight = 120;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -108,8 +111,9 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
       return _buildCollapsedFooter();
     }
 
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.75;
     return Container(
-      height: 250,
+      height: _height.clamp(_minHeight, maxHeight < _minHeight ? _minHeight : maxHeight),
       decoration: const BoxDecoration(
         color: EmberTheme.surfacePanel,
         border: Border(
@@ -118,6 +122,20 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
       ),
       child: Column(
         children: [
+          // Drag to resize
+          MouseRegion(
+            cursor: SystemMouseCursors.resizeRow,
+            child: GestureDetector(
+              key: const ValueKey('drawer-resize-handle'),
+              behavior: HitTestBehavior.opaque,
+              onVerticalDragUpdate: (d) => setState(() => _height = (_height - d.delta.dy).clamp(_minHeight, maxHeight)),
+              onDoubleTap: () => setState(() => _height = _height < maxHeight - 1 ? maxHeight : 250),
+              child: const SizedBox(
+                height: 5,
+                child: Center(child: SizedBox(width: 36, height: 2, child: ColoredBox(color: EmberTheme.borderMedium))),
+              ),
+            ),
+          ),
           // Drawer Header Tab Bar
           Container(
             height: 30,
@@ -141,7 +159,6 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
                     Tab(child: Row(children: [Icon(Icons.terminal, size: 13), SizedBox(width: 4), Text('Console')])),
                     Tab(child: Row(children: [Icon(Icons.folder_outlined, size: 13), SizedBox(width: 4), Text('Asset Browser')])),
                     Tab(child: Row(children: [Icon(Icons.grid_view_rounded, size: 13), SizedBox(width: 4), Text('Tilemap Palette')])),
-                    Tab(child: Row(children: [Icon(Icons.code_rounded, size: 13), SizedBox(width: 4), Text('Script Editor')])),
                   ],
                 ),
                 const Spacer(),
@@ -168,7 +185,6 @@ class _BottomDrawerState extends State<BottomDrawer> with SingleTickerProviderSt
                 _buildConsoleTab(),
                 _buildAssetBrowserTab(),
                 TilemapPaletteWidget(engine: widget.engine),
-                ScriptEditorPanel(project: widget.project),
               ],
             ),
           ),

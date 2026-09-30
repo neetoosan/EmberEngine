@@ -19,18 +19,30 @@ class GenericComponentCard extends StatelessWidget {
   /// Called after any edit so the panel can rebuild.
   final VoidCallback onChanged;
 
+  /// Overrides the title and the properties shown (default: all of them).
+  final String? title;
+  final List<InspectableProperty>? properties;
+
+  /// Extra rows above / below the properties (e.g. buttons).
+  final Widget? header;
+  final Widget? footer;
+
   const GenericComponentCard({
     super.key,
     required this.component,
     required this.onChanged,
     this.icon = Icons.tune,
+    this.title,
+    this.properties,
+    this.header,
+    this.footer,
   });
 
   @override
   Widget build(BuildContext context) {
-    final props = component.inspectableProperties;
+    final props = properties ?? component.inspectableProperties;
     return CompactAccordion(
-      title: component.displayName,
+      title: title ?? component.displayName,
       icon: icon,
       isEnabled: component.enabled,
       onEnableChanged: (val) {
@@ -40,10 +52,12 @@ class GenericComponentCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          ?header,
           for (final p in props) ...[
             _buildProperty(p),
             const SizedBox(height: 6),
           ],
+          ?footer,
         ],
       ),
     );

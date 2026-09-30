@@ -26,6 +26,7 @@ import '../subsystems/ui/dialogue.dart';
 import '../subsystems/ui/ui_text.dart';
 import '../subsystems/ui/ui_widgets.dart';
 import '../templates/flappy_game.dart';
+import '../scripting/script_library.dart';
 import '../templates/legends_game.dart';
 import '../templates/quest_game.dart';
 
@@ -459,6 +460,7 @@ class EmberScene with ChangeNotifier {
     registerFlappyScripts();
     registerQuestScripts();
     registerLegendsScripts();
+    EmberScripts.instance; // Ember Script runtime: engine API + .ember scripts in Script Components
   }
 }
 

@@ -70,16 +70,60 @@ My Game/
 Open an existing project with **Project Hub → Open & Import → Browse Folder**,
 or from **Recent Projects**.
 
-## Game code (scripts)
+## Game code: Ember Script
 
-Dart is compiled ahead of time, so real gameplay code lives in the engine
-source, not inside project files:
+Click **Script** in the top bar (or `Ctrl+2`; `Ctrl+1` goes back to the scene)
+to open the Script workspace. **New** creates a `.ember` script from a template
+(top-down player, platformer player, chasing enemy, coin, spawner, HUD).
+**Attach to selected** puts it on the entity selected in the scene, or pick it in
+an entity's **Script Component**. Press **Play**: scripts run immediately, with
+no rebuild, and they also run in exported games.
+
+```dart
+var speed = 140;          // top-level variables: one per entity, editable in the Inspector
+
+void onUpdate(dt) {
+  self.position = self.position + Input.move * speed * dt;
+  if (Input.pressed("Space")) playSound("jump");
+}
+
+void onTriggerEnter(other) {
+  if (other.hasTag("coin")) {
+    destroy(other);
+    find("Score").text.text = "Got one!";
+  }
+}
+```
+
+- Dart-like syntax: `var`/`final`, `if`/`else`, `for`, `for (x in list)`, `while`,
+  functions, lambdas `(x) => x * 2`, lists, maps, `'Hi $name ${hp + 1}'`.
+  Type names (`int x = 1;`) are allowed and ignored.
+- Events: `onStart`, `onUpdate(dt)`, `onTriggerEnter(other)`, `onDamaged`,
+  `onDeath`, `onKill`, `onInteract(by)`, `onUIAction(action)`, …
+- `self` is the entity. `self.x`, `self.position`, `self.health.damage(1)`,
+  `self.sprite.flipX`, `self.get("Any Component").anyInspectorField`,
+  `self.add("Health")`, `other.call("stun", 2)`, `other.script.speed = 0`.
+- Engine: `Input`, `Game`, `find`, `findAll`, `findNearest`, `spawn`, `destroy`,
+  `strike`, `after`, `every`, `tween`, `say`, `playSound`, `loadLevel`,
+  `saveValue`/`loadValue`, `vec(x, y)`, random and math helpers.
+- The **API reference** panel (book icon) lists everything with examples, and a
+  click inserts it. The editor has autocomplete (`Ctrl+Space`), `Ctrl+F`
+  find/replace, `Ctrl+/` comments and smart indentation.
+- Errors are marked as you type. Runtime errors appear under **Problems** with
+  the line (click to jump) and never crash the editor; an endless loop is
+  stopped. `print(...)` goes to **Output** and the Console.
+- Edits to a script apply to the running game as soon as they are valid,
+  keeping its variables' values.
+
+### Compiled scripts (Dart)
+
+Engine-level behaviours can still be written in Dart and compiled in:
 
 1. Write a `GameScript` subclass in [`lib/game/game_scripts.dart`](lib/game/game_scripts.dart)
    (there is a `HoverBob` example).
 2. Register it by name in `registerGameScripts()`.
 3. In the editor, add a **Script Component** to an entity and pick your script
-   from the dropdown.
+   from the dropdown (listed under "Built into the engine").
 
 Built-in scripts: `FPS Player Controller`, `Platformer 2D Controller`,
 `Procedural Rotator`, `Collectible`, `Hover Bob`, and the template scripts

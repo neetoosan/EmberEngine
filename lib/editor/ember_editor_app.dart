@@ -5,6 +5,7 @@ import '../core/save_data.dart';
 import '../core/event_bus.dart';
 import '../core/input.dart';
 import '../core/scene.dart';
+import '../scripting/script_library.dart';
 import 'hub/project_launcher.dart';
 import 'hub/project_manifest.dart';
 import 'hub/project_storage.dart';
@@ -17,6 +18,7 @@ import 'panels/hierarchy_panel.dart';
 import 'panels/inspector_panel.dart';
 import 'panels/top_bar.dart';
 import 'panels/viewport_container.dart';
+import 'script/script_workspace.dart';
 import 'shortcuts/editor_shortcuts.dart';
 import 'theme/ember_theme.dart';
 
@@ -45,11 +47,7 @@ class EmberEditorApp extends StatefulWidget {
   final bool startInLauncher;
   final EmberProject? initialProject;
 
-  const EmberEditorApp({
-    super.key,
-    this.startInLauncher = true,
-    this.initialProject,
-  });
+  const EmberEditorApp({super.key, this.startInLauncher = true, this.initialProject});
 
   @override
   State<EmberEditorApp> createState() => _EmberEditorAppState();
@@ -67,7 +65,11 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
   bool _isZenMode = false;
   bool _showVirtualJoystick = false;
 
+  /// 0 = Scene (viewport, hierarchy, inspector), 1 = Script editor.
+  int _workspace = 0;
+
   final GlobalKey<ScaffoldMessengerState> _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -75,21 +77,86 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
     registerAllSubsystems();
     Input.bindHardwareKeyboard();
     _currentProject = widget.initialProject;
-    _screenMode = widget.startInLauncher && widget.initialProject == null
-        ? EditorScreenMode.launcher
-        : EditorScreenMode.editor;
+    _screenMode = widget.startInLauncher && widget.initialProject == null ? EditorScreenMode.launcher : EditorScreenMode.editor;
     _engine.addListener(_onEngineUpdate);
+    ScriptWorkspaceController.instance.addListener(_onScriptOpenRequest);
+    if (_currentProject != null) EmberScripts.instance.loadAll(_currentProject!.scripts);
+  }
+
+  /// "Edit script" from the Inspector: jump to the Script workspace.
+  void _onScriptOpenRequest() {
+    if (ScriptWorkspaceController.instance.pendingFile != null && _workspace != 1) {
+      setState(() => _workspace = 1);
+    }
+  }
+
+  void _setWorkspace(int w) {
+    if (_workspace != w) setState(() => _workspace = w);
+  }
+
+  Widget _workspaceSwitch(BuildContext context) {
+    // Narrow windows: icons only (the top bar is full)
+    final compact = MediaQuery.sizeOf(context).width < 1500;
+    Widget seg(String label, IconData icon, int w, String tip) => Tooltip(
+      message: tip,
+      child: InkWell(
+        key: ValueKey('workspace-$w'),
+        onTap: () => _setWorkspace(w),
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: compact ? 5 : 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: _workspace == w ? EmberTheme.accentEmber.withValues(alpha: 0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 13, color: _workspace == w ? EmberTheme.accentEmber : EmberTheme.textSecondary),
+              if (!compact) ...[
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: _workspace == w ? FontWeight.w700 : FontWeight.w500,
+                    color: _workspace == w ? Colors.white : EmberTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: EmberTheme.surfaceCard,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: EmberTheme.borderSubtle),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          seg('Scene', Icons.view_in_ar_outlined, 0, 'Scene workspace (Ctrl+1)'),
+          seg('Script', Icons.code, 1, 'Script workspace (Ctrl+2)'),
+        ],
+      ),
+    );
   }
 
   void _notify(String message, {bool isError = false}) {
     _engine.log(message, severity: isError ? LogSeverity.error : LogSeverity.info, source: 'Project');
     _messengerKey.currentState
       ?..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.redAccent : EmberTheme.surfaceCard,
-        duration: const Duration(seconds: 3),
-      ));
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Colors.redAccent : EmberTheme.surfaceCard,
+          duration: const Duration(seconds: 3),
+        ),
+      );
   }
 
   /// Copies the edited scene into the project and writes it to disk.
@@ -135,6 +202,7 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
   @override
   void dispose() {
     _engine.removeListener(_onEngineUpdate);
+    ScriptWorkspaceController.instance.removeListener(_onScriptOpenRequest);
     super.dispose();
   }
 
@@ -254,10 +322,19 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
             ),
           ),
         const PopupMenuDivider(),
-        const PopupMenuItem(value: '\u0000new', child: Text('+ New scene…', style: TextStyle(fontSize: 11))),
-        const PopupMenuItem(value: '\u0000start', child: Text('Set as start scene', style: TextStyle(fontSize: 11))),
+        const PopupMenuItem(
+          value: '\u0000new',
+          child: Text('+ New scene…', style: TextStyle(fontSize: 11)),
+        ),
+        const PopupMenuItem(
+          value: '\u0000start',
+          child: Text('Set as start scene', style: TextStyle(fontSize: 11)),
+        ),
         if (project.scenes.length > 1)
-          const PopupMenuItem(value: '\u0000delete', child: Text('Delete this scene', style: TextStyle(fontSize: 11))),
+          const PopupMenuItem(
+            value: '\u0000delete',
+            child: Text('Delete this scene', style: TextStyle(fontSize: 11)),
+          ),
       ],
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -269,7 +346,8 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
               style: const TextStyle(color: EmberTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w500),
             ),
           ),
-          const Icon(Icons.arrow_drop_down, size: 16, color: EmberTheme.textSecondary),
+          // Flexible too: on a crowded top bar everything shrinks instead of overflowing
+          const Flexible(child: Icon(Icons.arrow_drop_down, size: 16, color: EmberTheme.textSecondary)),
         ],
       ),
     );
@@ -280,15 +358,15 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
     // Sprites resolve against the project folder (template art falls back to the engine bundle).
     EmberAssets.instance.root = ProjectStorage.hasDiskLocation(project) ? project.path : null;
     SaveData.instance.open('${project.name} (editor)');
+    // Before the scene loads, so its Script Components find their .ember scripts
+    EmberScripts.instance.loadAll(project.scripts);
     _engine.sceneLibrary = _sceneLibrary;
     setState(() {
       _currentProject = project;
       _editingSceneName = project.scenes.containsKey(project.defaultSceneName)
           ? project.defaultSceneName
           : (project.scenes.isEmpty ? project.defaultSceneName : project.scenes.keys.first);
-      final targetMode = project.renderPipeline == RenderPipelineMode.twoD
-          ? EngineMode.twoD
-          : EngineMode.threeD;
+      final targetMode = project.renderPipeline == RenderPipelineMode.twoD ? EngineMode.twoD : EngineMode.threeD;
       _engine.preserveSceneOnModeSwitch = false;
       _engine.setMode(targetMode);
       _engine.loadScene(project.activeScene);
@@ -343,83 +421,97 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
       scaffoldMessengerKey: _messengerKey,
       debugShowCheckedModeBanner: false,
       theme: EmberTheme.darkTheme,
-      home: Builder(
-        builder: (appContext) {
-          if (_screenMode == EditorScreenMode.launcher) {
-            return ProjectLauncherScreen(
-              onOpenProject: _onOpenProject,
-            );
-          }
-
-          return Scaffold(
-            backgroundColor: EmberTheme.surfaceCanvas,
-            body: EditorShortcutsWrapper(
+      navigatorKey: _navigatorKey,
+      // Shortcuts sit above the navigator, so they work wherever the focus is
+      // (even after clicking out of a text field, when no widget has focus).
+      builder: (context, child) => _screenMode == EditorScreenMode.editor
+          ? EditorShortcutsWrapper(
               engine: _engine,
-              onOpenCommandPalette: () => _openCommandPalette(appContext),
+              onOpenCommandPalette: () {
+                final ctx = _navigatorKey.currentContext;
+                if (ctx != null) _openCommandPalette(ctx);
+              },
               onToggleHierarchy: () => setState(() => _showHierarchy = !_showHierarchy),
               onToggleInspector: () => setState(() => _showInspector = !_showInspector),
               onToggleBottomDrawer: () => setState(() => _isBottomDrawerExpanded = !_isBottomDrawerExpanded),
               onToggleZenMode: _toggleZenMode,
               onSave: _saveProject,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // 1. Top Bar (36px)
-                  EditorTopBar(
-                    engine: _engine,
-                    onOpenCommandPalette: () => _openCommandPalette(appContext),
-                    onToggleZenMode: _toggleZenMode,
-                    onToggleVirtualJoystick: () => setState(() => _showVirtualJoystick = !_showVirtualJoystick),
-                    showVirtualJoystick: _showVirtualJoystick,
-                    onOpenProjectHub: () => setState(() => _screenMode = EditorScreenMode.launcher),
-                    onOpenDoctor: () => EmberDoctorDialog.show(appContext, project: _currentProject),
-                    onSaveScene: _saveProject,
-                    onExportGame: ProjectStorage.isSupported
-                        ? () => ExportGameDialog.show(appContext, prepareProject: _saveProject)
-                        : null,
-                    sceneSelector: _buildSceneMenu(appContext),
-                  ),
+              onSwitchWorkspace: _setWorkspace,
+              child: child!,
+            )
+          : child!,
+      home: Builder(
+        builder: (appContext) {
+          if (_screenMode == EditorScreenMode.launcher) {
+            return ProjectLauncherScreen(onOpenProject: _onOpenProject);
+          }
 
-                  // 2. Middle Workstation Area (Hierarchy + Adaptive Viewport + Inspector)
-                  Expanded(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // Left Shelf: Hierarchy
-                        if (_showHierarchy)
-                          HierarchyPanel(engine: _engine),
+          return Scaffold(
+            backgroundColor: EmberTheme.surfaceCanvas,
+            body: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 1. Top Bar (36px)
+                EditorTopBar(
+                  engine: _engine,
+                  onOpenCommandPalette: () => _openCommandPalette(appContext),
+                  onToggleZenMode: _toggleZenMode,
+                  onToggleVirtualJoystick: () => setState(() => _showVirtualJoystick = !_showVirtualJoystick),
+                  showVirtualJoystick: _showVirtualJoystick,
+                  onOpenProjectHub: () => setState(() => _screenMode = EditorScreenMode.launcher),
+                  onOpenDoctor: () => EmberDoctorDialog.show(appContext, project: _currentProject),
+                  onSaveScene: _saveProject,
+                  onExportGame: ProjectStorage.isSupported
+                      ? () => ExportGameDialog.show(appContext, prepareProject: _saveProject)
+                      : null,
+                  sceneSelector: _buildSceneMenu(appContext),
+                  workspaceSwitch: _workspaceSwitch(appContext),
+                ),
 
-                        // Central Viewport Canvas + Virtual Joystick
-                        Expanded(
-                          child: Stack(
-                            children: [
-                              Positioned.fill(child: ViewportContainer(engine: _engine)),
-                              if (_showVirtualJoystick)
-                                const Positioned.fill(
-                                  child: VirtualJoystickOverlay(
-                                    isVisible: true,
-                                  ),
-                                ),
-                            ],
+                // 2. Middle: Scene workspace (Hierarchy + Viewport + Inspector) or the
+                // Script workspace. Both stay alive so switching keeps their state.
+                Expanded(
+                  child: IndexedStack(
+                    index: _workspace,
+                    sizing: StackFit.expand,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Left Shelf: Hierarchy
+                          if (_showHierarchy) HierarchyPanel(engine: _engine),
+
+                          // Central Viewport Canvas + Virtual Joystick
+                          Expanded(
+                            child: Stack(
+                              children: [
+                                Positioned.fill(child: ViewportContainer(engine: _engine)),
+                                if (_showVirtualJoystick) const Positioned.fill(child: VirtualJoystickOverlay(isVisible: true)),
+                              ],
+                            ),
                           ),
-                        ),
 
-                        // Right Shelf: Inspector
-                        if (_showInspector)
-                          InspectorPanel(engine: _engine),
-                      ],
-                    ),
+                          // Right Shelf: Inspector
+                          if (_showInspector) InspectorPanel(engine: _engine),
+                        ],
+                      ),
+                      ScriptWorkspace(
+                        engine: _engine,
+                        project: _currentProject,
+                        onSaveProject: () async => _saveProject(quiet: false),
+                      ),
+                    ],
                   ),
+                ),
 
-                  // 3. Bottom Console, Asset, Tilemap & Script Drawer
-                  BottomDrawer(
-                    engine: _engine,
-                    project: _currentProject,
-                    isExpanded: _isBottomDrawerExpanded,
-                    onToggleExpand: () => setState(() => _isBottomDrawerExpanded = !_isBottomDrawerExpanded),
-                  ),
-                ],
-              ),
+                // 3. Bottom Console, Asset, Tilemap & Script Drawer
+                BottomDrawer(
+                  engine: _engine,
+                  project: _currentProject,
+                  isExpanded: _isBottomDrawerExpanded,
+                  onToggleExpand: () => setState(() => _isBottomDrawerExpanded = !_isBottomDrawerExpanded),
+                ),
+              ],
             ),
           );
         },

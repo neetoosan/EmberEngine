@@ -20,7 +20,9 @@ import '../../subsystems/particles/particle_system.dart';
 import '../../subsystems/two_d/camera2d.dart';
 import '../../subsystems/two_d/parallax.dart';
 import '../../subsystems/two_d/sprite_animator.dart';
+import '../../scripting/script_library.dart';
 import '../../subsystems/ai/monster_ai.dart';
+import '../script/script_workspace.dart';
 import '../../subsystems/combat/combat.dart';
 import '../../subsystems/two_d/door.dart';
 import '../../subsystems/two_d/top_down_controller.dart';
@@ -1419,47 +1421,83 @@ class _InspectorPanelState extends State<InspectorPanel> {
       c is ScriptComponent;
 
   Widget _buildScriptCard(ScriptComponent script) {
-    // Names come from the registry, so user scripts in lib/game appear too.
-    final scriptPresets = ScriptRegistry.availableScripts..sort();
-    if (scriptPresets.isEmpty) scriptPresets.add('');
+    // Your .ember scripts first, then the ones compiled into the engine.
+    final ember = EmberScripts.instance.names;
+    final builtIn = ScriptRegistry.builtInScripts..sort();
+    final all = [...ember, ...builtIn];
+    final isEmber = EmberScripts.isScriptFile(script.scriptName);
+    final instance = script.scriptInstance;
+    final problem = isEmber ? EmberScripts.instance.compileError(script.scriptName) : null;
 
-    return CompactAccordion(
-      title: 'Script Component',
-      icon: Icons.code,
-      isEnabled: script.enabled,
-      onEnableChanged: (val) => script.enabled = val,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text('Script:', style: TextStyle(fontSize: 11, color: EmberTheme.textMuted)),
-              const Spacer(),
-              DropdownButton<String>(
-                value: scriptPresets.contains(script.scriptName) ? script.scriptName : null,
+    final header = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text('Script:', style: TextStyle(fontSize: 11, color: EmberTheme.textMuted)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: all.contains(script.scriptName) ? script.scriptName : null,
                 hint: const Text('Choose script', style: TextStyle(fontSize: 11)),
                 dropdownColor: EmberTheme.surfaceCard,
                 underline: const SizedBox.shrink(),
                 style: const TextStyle(fontSize: 11, color: EmberTheme.textPrimary),
-                items: scriptPresets.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                items: [
+                  for (final s in ember)
+                    DropdownMenuItem(value: s, child: Row(children: [
+                      const Icon(Icons.bolt, size: 12, color: EmberTheme.accentEmber),
+                      const SizedBox(width: 4),
+                      Flexible(child: Text(s, overflow: TextOverflow.ellipsis)),
+                    ])),
+                  for (final s in builtIn) DropdownMenuItem(value: s, child: Text(s, overflow: TextOverflow.ellipsis)),
+                ],
                 onChanged: (val) {
                   if (val != null) setState(() => script.scriptName = val);
                 },
               ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            script.scriptInstance == null
-                ? 'Script "${script.scriptName}" is not registered (see lib/game/game_scripts.dart)'
-                : 'Runs: ${script.scriptName}',
-            style: TextStyle(
-              fontSize: 10,
-              color: script.scriptInstance == null ? EmberTheme.accentRed : EmberTheme.textSecondary,
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        if (instance == null && script.scriptName.isNotEmpty)
+          Text('Script "${script.scriptName}" was not found', style: const TextStyle(fontSize: 10, color: EmberTheme.accentRed))
+        else if (problem != null)
+          Text('Line ${problem.line}: ${problem.message}',
+              maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: EmberTheme.accentRed)),
+        const SizedBox(height: 6),
+      ],
+    );
+
+    final footer = Row(
+      children: [
+        if (isEmber)
+          TextButton.icon(
+            key: const ValueKey('edit-script'),
+            onPressed: () => ScriptWorkspaceController.instance.open(script.scriptName),
+            icon: const Icon(Icons.edit, size: 13),
+            label: const Text('Edit script', style: TextStyle(fontSize: 11)),
+          )
+        else
+          Flexible(
+            child: Text(
+              script.scriptName.isEmpty ? '' : 'Built into the engine',
+              style: const TextStyle(fontSize: 10, color: EmberTheme.textMuted),
             ),
           ),
-        ],
-      ),
+      ],
+    );
+
+    return GenericComponentCard(
+      component: script,
+      title: isEmber ? 'Script · ${script.scriptName}' : 'Script Component',
+      icon: isEmber ? Icons.bolt : Icons.code,
+      // The script picker is in the header; show only the script's variables below it
+      properties: script.inspectableProperties.where((p) => p.name.startsWith('var:')).toList(),
+      header: header,
+      footer: footer,
+      onChanged: () => setState(() {}),
     );
   }
 

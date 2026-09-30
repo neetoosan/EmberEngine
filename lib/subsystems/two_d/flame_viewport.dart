@@ -53,8 +53,11 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
     widget.engine.frame.removeListener(_onEngineChange);
     EmberAssets.instance.removeListener(_onEditorVisualChange);
     TileBrush.instance.removeListener(_onEditorVisualChange);
+    _gameFocus.dispose();
     super.dispose();
   }
+
+  final FocusNode _gameFocus = FocusNode(debugLabel: 'Flame game', canRequestFocus: false, skipTraversal: true);
 
   void _onEditorVisualChange() {
     if (mounted) setState(() {});
@@ -319,7 +322,9 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
             onPointerHover: _handlePointerHover,
             onPointerUp: _handlePointerUp,
             onPointerSignal: _handlePointerSignal,
-            child: GameWidget(game: _game),
+            // No keyboard focus: Flame would swallow every key (editor shortcuts
+            // included). Game input reads the hardware keyboard through Input.
+            child: GameWidget(game: _game, autofocus: false, focusNode: _gameFocus),
           ),
         ),
 

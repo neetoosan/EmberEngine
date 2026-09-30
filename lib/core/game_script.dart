@@ -77,9 +77,26 @@ abstract class GameScript {
 /// Factory signature for instantiating custom GameScripts by name.
 typedef ScriptFactory = GameScript Function();
 
+/// A script with variables that can be set per entity in the Inspector
+/// (Ember Script's top-level `var speed = 120;`).
+abstract class ConfigurableScript {
+  /// Editable variables and their current values.
+  Map<String, Object?> get exposedFields;
+
+  /// Per-entity values set in the Inspector (saved with the scene).
+  Map<String, Object?> get overrides;
+  set overrides(Map<String, Object?> value);
+
+  void setField(String name, Object? value);
+}
+
 /// Global registry for user-defined game scripts.
 class ScriptRegistry {
   static final Map<String, ScriptFactory> _registry = {};
+
+  /// Scripts provided at runtime (Ember Script files), tried after compiled ones.
+  static GameScript? Function(String name)? fallback;
+  static List<String> Function()? extraScripts;
 
   static void register(String scriptName, ScriptFactory factory) {
     _registry[scriptName] = factory;
@@ -87,11 +104,14 @@ class ScriptRegistry {
 
   static GameScript? instantiate(String scriptName) {
     final factory = _registry[scriptName];
-    if (factory == null) return null;
-    return factory();
+    if (factory != null) return factory();
+    return fallback?.call(scriptName);
   }
 
-  static List<String> get availableScripts => _registry.keys.toList();
+  /// Compiled (built into the engine) script names.
+  static List<String> get builtInScripts => _registry.keys.toList();
+
+  static List<String> get availableScripts => [...?extraScripts?.call(), ..._registry.keys];
 }
 
 /// Component that attaches and runs a [GameScript] on an entity.
@@ -99,9 +119,14 @@ class ScriptComponent extends EmberComponent {
   String _scriptName;
   GameScript? _scriptInstance;
 
+  /// Inspector values for the script's variables (Ember Script `var`s).
+  final Map<String, Object?> vars = {};
+
   ScriptComponent({
     this._scriptName = '',
+    Map<String, Object?>? vars,
   }) {
+    if (vars != null) this.vars.addAll(vars);
     _instantiateScript();
   }
 
@@ -110,15 +135,23 @@ class ScriptComponent extends EmberComponent {
     if (_scriptName == name) return;
     _scriptInstance?.onDestroy();
     _scriptName = name;
+    vars.clear();
     _instantiateScript();
     notifyListeners();
   }
 
-  GameScript? get scriptInstance => _scriptInstance;
+  /// The running script. Resolved lazily, so scripts loaded after the scene
+  /// (e.g. a project's Ember Scripts) still attach.
+  GameScript? get scriptInstance {
+    if (_scriptInstance == null && _scriptName.isNotEmpty) _instantiateScript();
+    return _scriptInstance;
+  }
 
   void _instantiateScript() {
     if (_scriptName.isNotEmpty) {
       _scriptInstance = ScriptRegistry.instantiate(_scriptName);
+      final s = _scriptInstance;
+      if (s is ConfigurableScript) (s as ConfigurableScript).overrides = vars;
       if (entity != null) {
         _scriptInstance?._entity = entity;
       }
@@ -141,6 +174,7 @@ class ScriptComponent extends EmberComponent {
 
   @override
   void onAwake() {
+    scriptInstance?._entity = entity;
     _scriptInstance?.onAwake();
   }
 
@@ -177,26 +211,72 @@ class ScriptComponent extends EmberComponent {
           getter: () => _scriptName,
           setter: (val) => scriptName = val,
           options: ScriptRegistry.availableScripts,
-          tooltip: 'Select registered GameScript to run',
+          tooltip: 'Built-in scripts, or your .ember scripts from the Script workspace',
         ),
+        ..._fieldProperties(),
       ];
+
+  /// One Inspector row per script variable (`var speed = 120;`).
+  List<InspectableProperty> _fieldProperties() {
+    final s = scriptInstance;
+    if (s is! ConfigurableScript) return const [];
+    final config = s as ConfigurableScript;
+    final out = <InspectableProperty>[];
+    for (final e in config.exposedFields.entries) {
+      final name = e.key;
+      final label = _labelFor(name);
+      void set(Object? v) {
+        config.setField(name, v);
+        notifyListeners();
+      }
+
+      final value = e.value;
+      if (value is bool) {
+        out.add(InspectableProperty<bool>(
+            name: 'var:$name', label: label, type: InspectableType.boolean, getter: () => config.exposedFields[name] == true, setter: set));
+      } else if (value is num) {
+        out.add(InspectableProperty<double>(
+          name: 'var:$name',
+          label: label,
+          type: InspectableType.number,
+          getter: () => (config.exposedFields[name] as num? ?? 0).toDouble(),
+          setter: set,
+          step: value is int ? 1 : 0.1,
+        ));
+      } else {
+        out.add(InspectableProperty<String>(
+            name: 'var:$name', label: label, type: InspectableType.string, getter: () => '${config.exposedFields[name] ?? ''}', setter: set));
+      }
+    }
+    return out;
+  }
+
+  /// `moveSpeed` -> `Move Speed`.
+  static String _labelFor(String name) {
+    final spaced = name.replaceAllMapped(RegExp(r'(?<=[a-z0-9])([A-Z])'), (m) => ' ${m[1]}').replaceAll('_', ' ').trim();
+    return spaced.isEmpty ? name : spaced[0].toUpperCase() + spaced.substring(1);
+  }
 
   @override
   Map<String, dynamic> toJson() {
     return {
       'scriptName': _scriptName,
+      if (vars.isNotEmpty) 'vars': Map<String, Object?>.of(vars),
     };
   }
 
   @override
   void fromJson(Map<String, dynamic> json) {
     _scriptName = json['scriptName'] as String? ?? '';
+    vars
+      ..clear()
+      ..addAll((json['vars'] as Map?)?.cast<String, Object?>() ?? const {});
     _instantiateScript();
     notifyListeners();
   }
 
   @override
   ScriptComponent clone() {
-    return ScriptComponent(scriptName: _scriptName);
+    return ScriptComponent(scriptName: _scriptName, vars: Map.of(vars));
   }
 }

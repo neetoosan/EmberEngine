@@ -14,6 +14,7 @@ import 'editor/hub/project_package.dart';
 import 'editor/mobile/virtual_joystick.dart';
 import 'editor/panels/viewport_container.dart';
 import 'game/game_scripts.dart';
+import 'scripting/script_library.dart';
 import 'subsystems/audio/audio_output.dart';
 
 /// Standalone Game Runtime Player Entry Point for Ember Engine.
@@ -77,6 +78,8 @@ class _EmberPlayerAppState extends State<EmberPlayerApp> {
     final project = widget.project;
     SaveData.instance.open(project?.name ?? 'Ember Demo');
     if (project != null) {
+      // The game's Ember Scripts, before any scene starts
+      EmberScripts.instance.loadAll(project.scripts);
       // Every level of the game, captured before play so loadLevel always starts fresh
       final levels = {for (final e in project.scenes.entries) e.key: e.value.toJson()};
       _engine.sceneLibrary = () => levels;

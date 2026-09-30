@@ -14,6 +14,9 @@ class EditorShortcutsWrapper extends StatelessWidget {
   final VoidCallback onToggleZenMode;
   final VoidCallback? onSave;
 
+  /// 0 = Scene workspace, 1 = Script workspace.
+  final void Function(int workspace)? onSwitchWorkspace;
+
   const EditorShortcutsWrapper({
     super.key,
     required this.engine,
@@ -24,7 +27,15 @@ class EditorShortcutsWrapper extends StatelessWidget {
     required this.onToggleBottomDrawer,
     required this.onToggleZenMode,
     this.onSave,
+    this.onSwitchWorkspace,
   });
+
+  /// True while the keyboard focus is in an editable text field.
+  static bool get isTypingInTextField {
+    final ctx = FocusManager.instance.primaryFocus?.context;
+    if (ctx == null) return false;
+    return ctx.widget is EditableText || ctx.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -53,6 +64,21 @@ class EditorShortcutsWrapper extends StatelessWidget {
 
     // While the game runs, plain keys belong to gameplay (read through Input).
     if (isRunning && !isCtrlOrCmd) return KeyEventResult.ignored;
+
+    // Ctrl/Cmd + 1 / 2 -> Scene / Script workspace
+    if (isCtrlOrCmd && onSwitchWorkspace != null) {
+      if (key == LogicalKeyboardKey.digit1) {
+        onSwitchWorkspace!(0);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.digit2) {
+        onSwitchWorkspace!(1);
+        return KeyEventResult.handled;
+      }
+    }
+
+    // Typing in a text field (code editor, Inspector, search): plain keys are text
+    if (!isCtrlOrCmd && isTypingInTextField) return KeyEventResult.ignored;
 
     // Ctrl/Cmd + K -> Command Palette
     if (isCtrlOrCmd && key == LogicalKeyboardKey.keyK) {
@@ -141,6 +167,7 @@ class EditorShortcutsWrapper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Focus(
+      debugLabel: 'EditorShortcuts',
       autofocus: true,
       onKeyEvent: _handleKeyEvent,
       child: child,

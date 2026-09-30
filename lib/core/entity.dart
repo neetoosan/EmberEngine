@@ -186,21 +186,22 @@ class EmberEntity with ChangeNotifier {
 
   /// Runs the awake phase for all components and children.
   void awake() {
-    for (final component in _components) {
+    for (final component in List<EmberComponent>.from(_components)) {
       component.internalAwake();
     }
-    for (final child in _children) {
+    for (final child in List<EmberEntity>.from(_children)) {
       child.awake();
     }
   }
 
-  /// Runs the start phase for all enabled components and children.
+  /// Runs the start phase for all enabled components and children
+  /// (snapshots: a script may add components in its onStart).
   void start() {
     if (!_enabled) return;
-    for (final component in _components) {
+    for (final component in List<EmberComponent>.from(_components)) {
       component.internalStart();
     }
-    for (final child in _children) {
+    for (final child in List<EmberEntity>.from(_children)) {
       child.start();
     }
   }

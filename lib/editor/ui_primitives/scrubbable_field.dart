@@ -102,32 +102,36 @@ class _ScrubbableFieldState extends State<ScrubbableField> {
       decoration: BoxDecoration(
         color: EmberTheme.surfaceCard,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-          color: _isEditing ? EmberTheme.accentEmber : EmberTheme.borderSubtle,
-          width: 1,
-        ),
+        border: Border.all(color: _isEditing ? EmberTheme.accentEmber : EmberTheme.borderSubtle, width: 1),
       ),
       child: Row(
         children: [
-          // Scrubbable Label Handle
-          GestureDetector(
-            onHorizontalDragUpdate: _handleHorizontalDragUpdate,
-            child: MouseRegion(
-              cursor: SystemMouseCursors.resizeLeftRight,
-              child: Container(
-                width: 18,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.15),
-                  borderRadius: const BorderRadius.horizontal(left: Radius.circular(3)),
-                ),
-                child: Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'monospace',
+          // Scrubbable Label Handle (shrinks with an ellipsis in narrow fields)
+          Flexible(
+            child: GestureDetector(
+              onHorizontalDragUpdate: _handleHorizontalDragUpdate,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.resizeLeftRight,
+                // Axis letters (X, Y) get a small square; names ("Speed") get room to be read
+                child: Container(
+                  width: widget.label.length <= 2 ? 18 : null,
+                  constraints: const BoxConstraints(maxWidth: 130),
+                  padding: widget.label.length <= 2 ? null : const EdgeInsets.symmetric(horizontal: 6),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.15),
+                    borderRadius: const BorderRadius.horizontal(left: Radius.circular(3)),
+                  ),
+                  child: Text(
+                    widget.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: widget.label.length <= 2 ? 'monospace' : null,
+                    ),
                   ),
                 ),
               ),

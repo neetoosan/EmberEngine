@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'event_bus.dart';
 import 'input.dart';
 import 'tween.dart';
+import '../scripting/script_library.dart';
 import '../subsystems/two_d/door.dart';
 import '../subsystems/ui/dialogue.dart';
 import '../subsystems/ui/ui_widgets.dart';
@@ -156,6 +157,8 @@ class EmberEngine with ChangeNotifier {
       _savedSceneSnapshot = _activeScene.toJson();
       _runningSceneJson = _savedSceneSnapshot;
       Input.reset();
+      levelTime = 0;
+      EmberScripts.instance.beginPlay();
       _activeScene.awake();
       _activeScene.start();
       _activeScene.isRunning = true;
@@ -250,6 +253,7 @@ class EmberEngine with ChangeNotifier {
   /// One frame of the running game: physics + scripts on scaled game time,
   /// then tweens, dialogue and UI hotkeys on real time.
   void _gameFrame(double dt) {
+    levelTime += dt * timeScale;
     if (timeScale > 0) _simulate(dt * timeScale);
     EmberTween.update(dt);
     DialogueSystem.instance.update(dt);
@@ -387,6 +391,9 @@ class EmberEngine with ChangeNotifier {
   /// Tweens and UI keep running on real time.
   double timeScale = 1;
 
+  /// Game seconds since the current level started (scaled by [timeScale]).
+  double levelTime = 0;
+
   /// JSON of the scene currently being played, for [restartScene].
   Map<String, dynamic>? _runningSceneJson;
 
@@ -406,6 +413,7 @@ class EmberEngine with ChangeNotifier {
     // only drop this frame's one-shot presses.
     Input.endFrame();
     _physicsAccumulator = 0.0;
+    levelTime = 0;
     _activeScene.awake();
     _activeScene.start();
     _activeScene.isRunning = true;
