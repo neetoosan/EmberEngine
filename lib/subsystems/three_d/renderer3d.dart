@@ -1,3 +1,5 @@
+import 'dart:ui' show Vertices;
+import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' hide Colors;
@@ -158,28 +160,45 @@ class Renderer3D {
     // 4. Depth Sorting (Painter's algorithm: farthest first)
     projectedTriangles.sort((a, b) => b.depth.compareTo(a.depth));
 
-    // 5. Draw Triangles
-    final fillPaint = Paint()..style = PaintingStyle.fill;
+    // 5. Draw Triangles. Consecutive filled triangles are sent to the GPU as one
+    // vertex batch (drawVertices) instead of one path per triangle; the sorted
+    // order is kept, so depth ordering is unchanged.
     final wirePaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     final path = Path();
+    final batchPaint = Paint();
+    final positions = <double>[];
+    final colors = <int>[];
+
+    void flushBatch() {
+      if (positions.isEmpty) return;
+      canvas.drawVertices(
+        Vertices.raw(VertexMode.triangles, Float32List.fromList(positions), colors: Int32List.fromList(colors)),
+        BlendMode.dst, // use the per-vertex colours as-is
+        batchPaint,
+      );
+      positions.clear();
+      colors.clear();
+    }
 
     for (final tri in projectedTriangles) {
-      path.reset();
-      path.moveTo(tri.p0.dx, tri.p0.dy);
-      path.lineTo(tri.p1.dx, tri.p1.dy);
-      path.lineTo(tri.p2.dx, tri.p2.dy);
-      path.close();
-
       if (tri.wireframe) {
+        flushBatch();
+        path.reset();
+        path.moveTo(tri.p0.dx, tri.p0.dy);
+        path.lineTo(tri.p1.dx, tri.p1.dy);
+        path.lineTo(tri.p2.dx, tri.p2.dy);
+        path.close();
         wirePaint.color = tri.color;
         canvas.drawPath(path, wirePaint);
       } else {
-        fillPaint.color = tri.color;
-        canvas.drawPath(path, fillPaint);
+        positions.addAll([tri.p0.dx, tri.p0.dy, tri.p1.dx, tri.p1.dy, tri.p2.dx, tri.p2.dy]);
+        final argb = tri.color.toARGB32();
+        colors.addAll([argb, argb, argb]);
       }
     }
+    flushBatch();
 
     // 6. Draw 3D Particles
     _renderParticles3D(canvas, engine, viewProjMatrix, size);

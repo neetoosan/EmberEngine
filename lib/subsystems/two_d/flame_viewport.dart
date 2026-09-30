@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:vector_math/vector_math_64.dart' as vm;
+import '../../core/assets.dart';
 import '../../core/engine_loop.dart';
 import '../../core/event_bus.dart';
 import '../../core/input.dart';
@@ -40,12 +41,38 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
     super.initState();
     _game = EmberFlameGame(engine: widget.engine);
     widget.engine.addListener(_onEngineChange);
+    widget.engine.frame.addListener(_onEngineChange); // camera follow runs every frame
+    EmberAssets.instance.addListener(_onEditorVisualChange); // images finishing loading
+    TileBrush.instance.addListener(_onEditorVisualChange);
   }
 
   @override
   void dispose() {
     widget.engine.removeListener(_onEngineChange);
+    widget.engine.frame.removeListener(_onEngineChange);
+    EmberAssets.instance.removeListener(_onEditorVisualChange);
+    TileBrush.instance.removeListener(_onEditorVisualChange);
     super.dispose();
+  }
+
+  void _onEditorVisualChange() {
+    if (mounted) setState(() {});
+  }
+
+  /// While editing, Flame's continuous game loop is paused and exactly one
+  /// frame is drawn after each rebuild (edits, pan/zoom, brush moves, image
+  /// loads) instead of repainting 60 times a second. Playing resumes the loop.
+  void _syncRenderLoop() {
+    final running = widget.engine.playState != PlayState.stopped;
+    if (running) {
+      if (_game.paused) _game.resumeEngine();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.engine.playState != PlayState.stopped) return;
+      if (!_game.paused) _game.pauseEngine();
+      _game.stepEngine();
+    });
   }
 
   /// The scene the editor view was last framed for.
@@ -263,6 +290,7 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
 
   @override
   Widget build(BuildContext context) {
+    _syncRenderLoop();
     final worldMouse = _game.screenToWorld(_mousePos);
     if (!identical(widget.engine.activeScene, _framedScene)) {
       // The game view only has a size after layout; frame the camera then.

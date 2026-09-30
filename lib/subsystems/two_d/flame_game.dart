@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' as vm;
@@ -38,6 +39,9 @@ class EmberFlameGame extends FlameGame {
   /// Tile-brush outline under the cursor (world space), editor only.
   Rect? brushRect;
 
+  /// Upper bound on sideways repeats of one parallax layer per frame.
+  static const int _maxParallaxCopies = 64;
+
   /// True when the frame is being drawn through the scene's Camera 2D.
   bool get isGameView => _gameView != null;
 
@@ -67,8 +71,10 @@ class EmberFlameGame extends FlameGame {
     }
     _gameView = null;
 
-    // Editor view (or a running scene without a Camera 2D)
+    // Editor view (or a running scene without a Camera 2D). Clip to the view:
+    // culling and parallax repeats size themselves from the clip bounds.
     canvas.save();
+    canvas.clipRect(Offset.zero & screen);
     canvas.translate(size.x / 2 + panOffset.x, size.y / 2 + panOffset.y);
     canvas.scale(zoom, zoom);
 
@@ -150,16 +156,28 @@ class EmberFlameGame extends FlameGame {
     canvas.drawLine(Offset(0, minY), Offset(0, maxY), axisPaint);
   }
 
-  void _drawEntities(Canvas canvas, bool drawHitboxes) {
-    final entities = engine.activeScene.allEntities;
+  // Draw order cache: re-sorted only when the scene structure or a z-index changes.
+  Object? _sortedScene;
+  int _sortedVersion = -1;
+  List<EmberEntity> _sorted = const [];
 
-    // Sort by z-index if Transform2DComponent is present
-    final sorted = List<EmberEntity>.from(entities)
+  List<EmberEntity> _drawOrder() {
+    final scene = engine.activeScene;
+    if (identical(scene, _sortedScene) && _sortedVersion == EmberEntity.structureVersion) return _sorted;
+    _sortedScene = scene;
+    _sortedVersion = EmberEntity.structureVersion;
+    // Stable sort by z-index (ties keep hierarchy order)
+    final indexed = scene.allEntities.indexed.toList()
       ..sort((a, b) {
-        final za = a.getComponent<Transform2DComponent>()?.zIndex ?? 0;
-        final zb = b.getComponent<Transform2DComponent>()?.zIndex ?? 0;
-        return za.compareTo(zb);
+        final za = a.$2.getComponent<Transform2DComponent>()?.zIndex ?? 0;
+        final zb = b.$2.getComponent<Transform2DComponent>()?.zIndex ?? 0;
+        return za != zb ? za.compareTo(zb) : a.$1.compareTo(b.$1);
       });
+    return _sorted = [for (final (_, e) in indexed) e];
+  }
+
+  void _drawEntities(Canvas canvas, bool drawHitboxes) {
+    final sorted = _drawOrder();
 
     // Visible world area; anything outside it is skipped (long levels stay fast)
     final worldClip = canvas.getLocalClipBounds();
@@ -199,7 +217,8 @@ class EmberFlameGame extends FlameGame {
       if (repeat) {
         offsets.clear();
         final first = ((worldClip.left - pos.x) / copyWidth).floor() - 1;
-        final last = ((worldClip.right - pos.x) / copyWidth).ceil() + 1;
+        // Never draw an unbounded number of copies (e.g. if the view is not clipped)
+        final last = math.min(((worldClip.right - pos.x) / copyWidth).ceil() + 1, first + _maxParallaxCopies);
         for (var k = first; k <= last; k++) {
           offsets.add(k * copyWidth);
         }

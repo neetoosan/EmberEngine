@@ -237,10 +237,9 @@ class CharacterController2DComponent extends EmberComponent {
     final scene = entity?.scene;
     if (scene == null) return const [];
     final hits = <TileHit>[];
-    for (final e in scene.allEntities) {
-      if (!e.enabled) continue;
-      final map = e.getComponent<FlameTileMapComponent>();
-      if (map == null || !map.enabled || !e.hasComponent<Transform2DComponent>()) continue;
+    for (final map in scene.componentsOf<FlameTileMapComponent>()) {
+      final e = map.entity;
+      if (e == null || !e.enabled || !map.enabled) continue;
       hits.addAll(map.tilesIn(area));
     }
     return hits;

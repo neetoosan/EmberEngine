@@ -55,6 +55,7 @@ class EmberEngine with ChangeNotifier {
 
   void _init() {
     _activeScene = EmberScene.createDefault3DScene();
+    _activeScene.addListener(_notifyUi);
     log('Ember Engine initialized in 3D Mode', severity: LogSeverity.info, source: 'Core');
   }
 
@@ -132,11 +133,11 @@ class EmberEngine with ChangeNotifier {
 
   void loadScene(EmberScene scene) {
     if (identical(scene, _activeScene)) return; // would otherwise destroy the scene being loaded
-    _activeScene.removeListener(notifyListeners);
+    _activeScene.removeListener(_notifyUi);
     _activeScene.destroy();
     _activeScene = scene;
     _selectedEntity = null;
-    _activeScene.addListener(notifyListeners);
+    _activeScene.addListener(_notifyUi);
     notifyListeners();
   }
 
@@ -261,6 +262,41 @@ class EmberEngine with ChangeNotifier {
     // 5. Flush frame input triggers
     Input.endFrame();
 
+    // 6. Viewports redraw every frame; panels only get a throttled refresh.
+    frame.value++;
+    _uiThrottle += dt;
+    if (_uiDirty && _uiThrottle >= uiRefreshInterval) _flushUi();
+  }
+
+  // --- Change notifications ---
+  //
+  // `EmberEngine` listeners (panels: hierarchy, inspector, top bar, console)
+  // rebuild on every notification. While a game runs, scene changes happen
+  // every frame, so they are coalesced to [uiRefreshInterval]. Viewports that
+  // must redraw every frame listen to [frame] instead.
+
+  /// Increments once per engine tick. Listen to this to redraw every frame.
+  final ValueNotifier<int> frame = ValueNotifier<int>(0);
+
+  /// Minimum seconds between panel refreshes while the game is running.
+  double uiRefreshInterval = 0.2;
+
+  bool _uiDirty = false;
+  double _uiThrottle = 0;
+
+  /// Notifies panels now while editing, or at most every [uiRefreshInterval]
+  /// seconds while the game runs.
+  void _notifyUi() {
+    if (_playState == PlayState.stopped) {
+      notifyListeners();
+    } else {
+      _uiDirty = true;
+    }
+  }
+
+  void _flushUi() {
+    _uiDirty = false;
+    _uiThrottle = 0;
     notifyListeners();
   }
 
@@ -329,7 +365,9 @@ class EmberEngine with ChangeNotifier {
   void _startRunningScene(EmberScene scene, {Map<String, dynamic>? json}) {
     if (json != null) _runningSceneJson = json;
     loadScene(scene);
-    Input.reset();
+    // Keep keys the player is still holding (e.g. Right after a respawn);
+    // only drop this frame's one-shot presses.
+    Input.endFrame();
     _physicsAccumulator = 0.0;
     _activeScene.awake();
     _activeScene.start();
@@ -339,13 +377,17 @@ class EmberEngine with ChangeNotifier {
 
   /// The main camera in 3D, or the 2D player character, so sound pans relative to what the player sees.
   EmberEntity? _findAudioListener() {
-    for (final e in _activeScene.allEntities) {
-      if (!e.enabled) continue;
-      final cam = e.getComponent<CameraComponent>();
-      if (cam != null && cam.isMainCamera) return e;
-      if (e.hasComponent<CharacterController2DComponent>()) return e;
+    for (final cam in _activeScene.componentsOf<CameraComponent>()) {
+      if (cam.isMainCamera && (cam.entity?.enabled ?? false)) return cam.entity;
     }
-    return null;
+    EmberEntity? firstCharacter;
+    for (final cc in _activeScene.componentsOf<CharacterController2DComponent>()) {
+      final e = cc.entity;
+      if (e == null || !e.enabled) continue;
+      if (e.tags.contains('player')) return e;
+      firstCharacter ??= e;
+    }
+    return firstCharacter;
   }
 
   // --- Logging ---
@@ -361,7 +403,7 @@ class EmberEngine with ChangeNotifier {
       _logs.removeAt(0);
     }
     EmberEventBus.instance.emit(LogEvent(entry));
-    notifyListeners();
+    _notifyUi();
   }
 
   void clearLogs() {

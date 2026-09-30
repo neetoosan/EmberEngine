@@ -262,7 +262,13 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(current, style: const TextStyle(color: EmberTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w500)),
+          Flexible(
+            child: Text(
+              current,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: EmberTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w500),
+            ),
+          ),
           const Icon(Icons.arrow_drop_down, size: 16, color: EmberTheme.textSecondary),
         ],
       ),

@@ -41,6 +41,11 @@ class EmberEntity with ChangeNotifier {
 
   static int _idCounter = 0;
 
+  /// Increments whenever any entity's structure changes (parent, components,
+  /// destruction, scene membership, draw order). Caches of "all entities" or
+  /// "all components of type T" are valid while this number is unchanged.
+  static int structureVersion = 0;
+
   EmberEntity({
     String? id,
     this.name = 'Entity',
@@ -80,6 +85,7 @@ class EmberEntity with ChangeNotifier {
   /// Sets the parent entity, maintaining hierarchy consistency.
   void setParent(EmberEntity? newParent) {
     if (_parent == newParent) return;
+    structureVersion++;
     _parent?._children.remove(this);
     _parent = newParent;
     if (newParent != null && !newParent._children.contains(this)) {
@@ -126,6 +132,7 @@ class EmberEntity with ChangeNotifier {
 
   /// Adds a component to this entity.
   T addComponent<T extends EmberComponent>(T component) {
+    structureVersion++;
     component.attach(this);
     _components.add(component);
     component.addListener(notifyListeners);
@@ -158,6 +165,7 @@ class EmberEntity with ChangeNotifier {
   /// Removes a component instance or returns false if not present.
   bool removeComponent(EmberComponent component) {
     if (_components.remove(component)) {
+      structureVersion++;
       component.removeListener(notifyListeners);
       component.detach();
       notifyListeners();
@@ -236,6 +244,7 @@ class EmberEntity with ChangeNotifier {
 
   /// Destroys this entity, its components, and all child entities.
   void destroy() {
+    structureVersion++;
     for (final component in List<EmberComponent>.from(_components)) {
       component.removeListener(notifyListeners);
       component.detach();

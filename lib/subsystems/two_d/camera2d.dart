@@ -72,10 +72,9 @@ class Camera2DComponent extends EmberComponent {
 
   /// The first enabled camera in [scene], if any.
   static Camera2DComponent? findIn(EmberScene scene) {
-    for (final e in scene.allEntities) {
-      if (!e.enabled) continue;
-      final cam = e.getComponent<Camera2DComponent>();
-      if (cam != null && cam.enabled && e.hasComponent<Transform2DComponent>()) return cam;
+    for (final cam in scene.componentsOf<Camera2DComponent>()) {
+      final e = cam.entity;
+      if (e != null && e.enabled && cam.enabled && e.hasComponent<Transform2DComponent>()) return cam;
     }
     return null;
   }

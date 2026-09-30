@@ -20,15 +20,25 @@ class AudioOutput implements AudioBackend {
   static final AudioOutput instance = AudioOutput._();
   AudioOutput._();
 
-  /// Upper bound on simultaneously playing one-shot sounds; the oldest is cut first.
-  static const int maxVoices = 12;
+  /// Size of the reusable player pool for one-shot sounds. When all are busy
+  /// the oldest sound is cut and its player reused.
+  static const int maxVoices = 8;
 
   bool _attached = false;
   bool _reportedError = false;
   Directory? _cacheDir;
   final Map<String, Future<String?>> _wavCache = {};
-  final Map<int, AudioPlayer> _players = {};
-  final List<int> _oneShotOrder = [];
+
+  /// One-shot players are created once and reused (creating/disposing a
+  /// platform player per sound is expensive on Windows).
+  final List<AudioPlayer> _pool = [];
+  int _nextPooled = 0;
+
+  /// Which voice each pooled player is currently playing.
+  final Map<AudioPlayer, int> _poolOwner = {};
+
+  /// Looping voices (music) get their own player, disposed when stopped.
+  final Map<int, AudioPlayer> _dedicated = {};
 
   /// Starts routing [AudioSystem] playback to real audio output.
   void attach() {
@@ -62,25 +72,20 @@ class AudioOutput implements AudioBackend {
       }
       if (!voice.isPlaying) return; // stopped while loading
 
-      if (!voice.isLooping) {
-        if (_oneShotOrder.length >= maxVoices) _release(_oneShotOrder.first);
-        _oneShotOrder.add(voice.id);
-      }
-      final player = AudioPlayer();
-      _players[voice.id] = player;
-      player.onPlayerComplete.listen((_) {
-        if (!voice.isLooping) _release(voice.id);
-      });
-      if (!voice.isLooping && !isFileClip(voice.clip)) {
-        // Safety net in case a platform never reports completion.
-        Timer(const Duration(seconds: 3), () => _release(voice.id));
+      final AudioPlayer player;
+      if (voice.isLooping) {
+        player = AudioPlayer();
+        _dedicated[voice.id] = player;
+        await player.setReleaseMode(ReleaseMode.loop);
+      } else {
+        player = await _acquirePooled(voice.id);
       }
 
-      await player.setReleaseMode(voice.isLooping ? ReleaseMode.loop : ReleaseMode.stop);
       await player.setVolume(volume.clamp(0.0, 1.0));
       try {
         await player.setBalance(pan.clamp(-1.0, 1.0));
-        if (isFileClip(voice.clip) && voice.pitch != 1.0) await player.setPlaybackRate(voice.pitch);
+        final rate = isFileClip(voice.clip) ? voice.pitch : 1.0;
+        await player.setPlaybackRate(rate);
       } catch (_) {
         // Balance / rate are not supported on every platform.
       }
@@ -93,26 +98,51 @@ class AudioOutput implements AudioBackend {
     }
   }
 
+  /// A pooled player for [voiceId]: a new one until the pool is full, then
+  /// the players are reused round-robin (cutting the oldest sound).
+  Future<AudioPlayer> _acquirePooled(int voiceId) async {
+    final AudioPlayer player;
+    if (_pool.length < maxVoices) {
+      player = AudioPlayer();
+      _pool.add(player);
+      await player.setReleaseMode(ReleaseMode.stop);
+      player.onPlayerComplete.listen((_) => _poolOwner.remove(player));
+    } else {
+      player = _pool[_nextPooled];
+      _nextPooled = (_nextPooled + 1) % _pool.length;
+      if (_poolOwner.containsKey(player)) await player.stop();
+    }
+    _poolOwner[player] = voiceId;
+    return player;
+  }
+
   @override
   void stop(AudioVoice voice) => _release(voice.id);
 
   @override
   void stopAll() {
-    for (final id in List<int>.from(_players.keys)) {
+    for (final id in [..._dedicated.keys, ..._poolOwner.values]) {
       _release(id);
     }
   }
 
   void _release(int voiceId) {
-    _oneShotOrder.remove(voiceId);
-    final player = _players.remove(voiceId);
-    if (player == null) return;
-    unawaited(() async {
-      try {
-        await player.stop();
-        await player.dispose();
-      } catch (_) {}
-    }());
+    final dedicated = _dedicated.remove(voiceId);
+    if (dedicated != null) {
+      unawaited(() async {
+        try {
+          await dedicated.stop();
+          await dedicated.dispose();
+        } catch (_) {}
+      }());
+      return;
+    }
+    for (final entry in _poolOwner.entries.toList()) {
+      if (entry.value == voiceId) {
+        _poolOwner.remove(entry.key);
+        unawaited(entry.key.stop().catchError((Object _) {}));
+      }
+    }
   }
 
   Future<String?> _writeWav(String clip, double pitch) async {

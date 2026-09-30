@@ -41,6 +41,7 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
   void initState() {
     super.initState();
     widget.engine.addListener(_onEngineChanged);
+    widget.engine.frame.addListener(_onEngineChanged); // the game view moves every frame
     _cameraController.azimuth = 0.6;
     _cameraController.elevation = 0.4;
     _cameraController.distance = 9.0;
@@ -49,6 +50,7 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
   @override
   void dispose() {
     widget.engine.removeListener(_onEngineChanged);
+    widget.engine.frame.removeListener(_onEngineChanged);
     super.dispose();
   }
 
@@ -482,7 +484,7 @@ class _Renderer3DPainter extends CustomPainter {
     required this.wireframe,
     required this.showGrid,
     this.isGameView = false,
-  }) : super(repaint: engine);
+  }) : super(repaint: Listenable.merge([engine, engine.frame]));
 
   @override
   void paint(Canvas canvas, Size size) {

@@ -95,15 +95,19 @@ class EditorTopBar extends StatelessWidget {
           const SizedBox(width: 12),
 
           // 2. Active Scene (a scene/level menu when a project is open)
-          sceneSelector ??
-              Text(
-                engine.activeScene.name,
-                style: const TextStyle(
-                  color: EmberTheme.textSecondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
+          // Flexible: on narrow windows the scene name shrinks instead of overflowing
+          Flexible(
+            child: sceneSelector ??
+                Text(
+                  engine.activeScene.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: EmberTheme.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
+          ),
 
           const Spacer(),
 

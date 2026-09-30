@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:vector_math/vector_math_64.dart';
 import 'component.dart';
+import 'entity.dart';
 import 'inspectable.dart';
 
 /// Alignment anchor for 2D components, corresponding to standard 2D / Flame anchors.
@@ -126,6 +127,7 @@ class Transform2DComponent extends EmberComponent {
   int get zIndex => _zIndex;
   set zIndex(int val) {
     _zIndex = val;
+    EmberEntity.structureVersion++; // draw order changed
     notifyListeners();
   }
 

@@ -314,21 +314,25 @@ class _ProjectLauncherScreenState extends State<ProjectLauncherScreen> {
       ),
       child: Row(
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _getTitleForTab(),
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _getSubtitleForTab(),
-                style: TextStyle(color: Colors.white.withAlpha(150), fontSize: 11),
-              ),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _getTitleForTab(),
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _getSubtitleForTab(),
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.white.withAlpha(150), fontSize: 11),
+                ),
+              ],
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 16),
           // Search Field (active for Recents & Templates)
           if (_selectedNavIndex == 0 || _selectedNavIndex == 1)
             SizedBox(

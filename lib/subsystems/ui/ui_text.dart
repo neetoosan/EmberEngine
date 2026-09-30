@@ -42,11 +42,8 @@ class UITextComponent extends EmberComponent {
   /// Draws every enabled UI text in [scene] inside [view] (screen pixels);
   /// [scale] converts design pixels to screen pixels.
   static void paintAll(Canvas canvas, Rect view, double scale, EmberScene scene) {
-    for (final e in scene.allEntities) {
-      if (!e.enabled) continue;
-      for (final t in e.getComponents<UITextComponent>()) {
-        if (t.enabled && t.text.isNotEmpty) t._paint(canvas, view, scale);
-      }
+    for (final t in scene.componentsOf<UITextComponent>()) {
+      if (t.enabled && t.text.isNotEmpty && (t.entity?.enabled ?? false)) t._paint(canvas, view, scale);
     }
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' hide Colors;
+import 'component.dart';
 import 'entity.dart';
 import 'transform3d.dart';
 import 'transform2d.dart';
@@ -43,14 +44,35 @@ class EmberScene with ChangeNotifier {
   /// List of top-level root entities in the scene hierarchy.
   List<EmberEntity> get rootEntities => List.unmodifiable(_rootEntities);
 
-  /// Flattened list of all entities in the scene (roots and all descendants).
+  // Lookup caches, rebuilt only when EmberEntity.structureVersion changes.
+  int _cacheVersion = -1;
+  List<EmberEntity>? _allCache;
+  final Map<Type, List<Object>> _componentCache = {};
+
+  void _checkCaches() {
+    if (_cacheVersion == EmberEntity.structureVersion) return;
+    _cacheVersion = EmberEntity.structureVersion;
+    _allCache = null;
+    _componentCache.clear();
+  }
+
+  /// Flattened, read-only list of all entities in the scene (roots and all
+  /// descendants). Cached between structural changes, so it is cheap to call
+  /// every frame.
   List<EmberEntity> get allEntities {
-    final list = <EmberEntity>[];
-    for (final root in _rootEntities) {
-      list.add(root);
-      list.addAll(root.getAllDescendants());
-    }
-    return list;
+    _checkCaches();
+    return _allCache ??= List.unmodifiable([
+      for (final root in _rootEntities) ...[root, ...root.getAllDescendants()],
+    ]);
+  }
+
+  /// Every component of type [T] in the scene (read-only, cached like
+  /// [allEntities]). Check `entity.enabled` / `component.enabled` when using it.
+  List<T> componentsOf<T extends EmberComponent>() {
+    _checkCaches();
+    return (_componentCache[T] ??= List<T>.unmodifiable([
+      for (final e in allEntities) ...e.getComponents<T>(),
+    ])) as List<T>;
   }
 
   final List<EmberEntity> _pendingDestroy = [];
@@ -62,6 +84,7 @@ class EmberScene with ChangeNotifier {
   /// Adds a root entity to the scene.
   void addEntity(EmberEntity entity) {
     if (!_rootEntities.contains(entity)) {
+      EmberEntity.structureVersion++;
       _rootEntities.add(entity);
       entity.bindScene(this);
       entity.addListener(notifyListeners);
@@ -92,6 +115,7 @@ class EmberScene with ChangeNotifier {
   /// Removes an entity from the scene.
   bool removeEntity(EmberEntity entity) {
     if (_rootEntities.remove(entity)) {
+      EmberEntity.structureVersion++;
       entity.removeListener(notifyListeners);
       entity.bindScene(null);
       entity.destroy();

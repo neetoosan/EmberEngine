@@ -25,24 +25,32 @@ class PhysicsWorld2D {
   /// Steps 2D physics: resolves solid overlaps, then dispatches contact events.
   static void step(EmberScene scene, double fixedDt) {
     final bodies = <(EmberEntity, Transform2DComponent, FlameHitbox2DComponent)>[];
-    for (final e in scene.allEntities) {
-      if (!e.enabled) continue;
+    for (final h in scene.componentsOf<FlameHitbox2DComponent>()) {
+      final e = h.entity;
+      if (e == null || !e.enabled || !h.enabled) continue;
       final t = e.getComponent<Transform2DComponent>();
-      final h = e.getComponent<FlameHitbox2DComponent>();
-      if (t != null && h != null && h.enabled) bodies.add((e, t, h));
+      if (t != null) bodies.add((e, t, h));
     }
 
     // 1. Contact events (detected before solids are pushed apart, so solid
     //    hits are seen; solids resting side by side count as touching).
     final previous = _contacts[scene] ?? <String>{};
     final current = <String>{};
-    for (int i = 0; i < bodies.length; i++) {
-      final (eA, tA, hitA) = bodies[i];
-      final rA = hitboxRect(tA, hitA);
-      for (int j = i + 1; j < bodies.length; j++) {
-        final (eB, tB, hitB) = bodies[j];
+    // Sort-and-sweep broadphase: each rectangle is computed once, bodies are
+    // sorted by left edge, and only pairs whose x-ranges overlap are tested.
+    final rects = [for (final (_, t, h) in bodies) hitboxRect(t, h)];
+    final order = List<int>.generate(bodies.length, (i) => i)..sort((a, b) => rects[a].left.compareTo(rects[b].left));
+    for (int oi = 0; oi < order.length; oi++) {
+      final i = order[oi];
+      final (eA, _, hitA) = bodies[i];
+      final rA = rects[i];
+      final reach = rA.right + _restingTolerance;
+      for (int oj = oi + 1; oj < order.length; oj++) {
+        final j = order[oj];
+        final rB = rects[j];
+        if (rB.left > reach) break; // everything further right starts beyond A
+        final (eB, _, hitB) = bodies[j];
         final bothSolid = hitA.isSolid && hitB.isSolid;
-        final rB = hitboxRect(tB, hitB);
         if (!(bothSolid ? rA.inflate(_restingTolerance).overlaps(rB) : rA.overlaps(rB))) continue;
         final key = _pairKey(eA, eB);
         current.add(key);
