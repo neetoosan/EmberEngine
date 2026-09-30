@@ -239,7 +239,7 @@ class CharacterController2DComponent extends EmberComponent {
     final hits = <TileHit>[];
     for (final map in scene.componentsOf<FlameTileMapComponent>()) {
       final e = map.entity;
-      if (e == null || !e.enabled || !map.enabled) continue;
+      if (e == null || !e.enabled || !map.enabled || !map.collision) continue;
       hits.addAll(map.tilesIn(area));
     }
     return hits;

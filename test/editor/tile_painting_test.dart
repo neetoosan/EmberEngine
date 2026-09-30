@@ -37,7 +37,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.textContaining('Painting into "Level"'), findsOneWidget);
+    expect(find.text('"Level"'), findsOneWidget, reason: 'single tilemap: shown as the paint layer');
 
     // Choose tile 3 and make it a "?" block
     await tester.tap(find.byTooltip('Tile 3 · solid'));

@@ -16,11 +16,13 @@ import '../../subsystems/particles/particle_system.dart';
 import '../../subsystems/audio/audio_component.dart';
 import '../../subsystems/audio/audio_system.dart';
 import '../../templates/flappy_game.dart';
+import '../../templates/legends_game.dart';
 import '../../templates/quest_game.dart';
 import 'project_manifest.dart';
 
 /// Identifier enum for built-in starter templates.
 enum ProjectTemplateType {
+  legends,
   quest,
   flappy,
   platformer2d,
@@ -73,6 +75,14 @@ class ProjectTemplate {
 
     // Build template specific scene & scripts
     switch (type) {
+      case ProjectTemplateType.legends:
+        project.scenes[Legends.title] = buildLegendsTitle();
+        project.scenes[Legends.village] = buildLegendsVillage();
+        project.scenes[Legends.field] = buildLegendsField();
+        project.scenes[Legends.dungeon] = buildLegendsDungeon();
+        project.defaultSceneName = Legends.title;
+        project.assets.addAll(Legends.assetFiles);
+        break;
       case ProjectTemplateType.quest:
         project.scenes['Level 1'] = buildQuestLevel1();
         project.scenes['Level 2'] = buildQuestLevel2();
@@ -524,6 +534,23 @@ class TemplateCatalog {
         'Kinematic 2D Character with Coyote Time',
         'Animated sprite sheets & jump bursts',
         'Collectable coins with sound FX',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.legends,
+      title: 'Ember Legends',
+      subtitle: 'Top-Down Monster-Slaying Action RPG',
+      description:
+          'Sword in hand, clear the field of slimes and bats, descend into the Ember Depths past skeleton archers, and defeat the Ember Golem. XP and level-ups, loot, potions, a village with NPCs, save crystal, pause menu and continue.',
+      icon: Icons.shield_rounded,
+      accentColor: Color(0xFFB45309),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Top-down', 'RPG', 'Combat', 'Pixel art', 'Music'],
+      features: [
+        'Sword combat, monster AI with pathfinding, boss fight',
+        'XP, level-ups, gold, potions and hearts',
+        'Village, field and dungeon linked by doors',
+        'Title screen, pause menu, save & continue',
       ],
     ),
     ProjectTemplate(

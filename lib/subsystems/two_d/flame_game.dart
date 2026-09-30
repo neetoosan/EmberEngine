@@ -5,10 +5,11 @@ import 'package:vector_math/vector_math_64.dart' as vm;
 import '../../core/engine_loop.dart';
 import '../../core/entity.dart';
 import '../../core/event_bus.dart';
+import '../../core/scene.dart';
 import '../../core/transform2d.dart';
 import '../../core/assets.dart';
 import '../particles/particle_system.dart';
-import '../ui/ui_text.dart';
+import '../ui/ui_widgets.dart';
 import 'camera2d.dart';
 import 'flame_components.dart';
 import 'parallax.dart';
@@ -42,6 +43,16 @@ class EmberFlameGame extends FlameGame {
   /// Upper bound on sideways repeats of one parallax layer per frame.
   static const int _maxParallaxCopies = 64;
 
+  /// Where screen UI was last laid out (for matching clicks to UI buttons).
+  Rect uiView = Rect.zero;
+  double uiScale = 1;
+
+  void _paintUi(Canvas canvas, Rect view, double scale, EmberScene scene) {
+    uiView = view;
+    uiScale = scale;
+    UIRenderer.paintAll(canvas, view, scale, scene);
+  }
+
   /// True when the frame is being drawn through the scene's Camera 2D.
   bool get isGameView => _gameView != null;
 
@@ -66,7 +77,7 @@ class EmberFlameGame extends FlameGame {
       canvas.translate(-view.center.x, -view.center.y);
       _drawEntities(canvas, false);
       canvas.restore();
-      UITextComponent.paintAll(canvas, view.viewport, view.zoom, scene);
+      _paintUi(canvas, view.viewport, view.zoom, scene);
       return;
     }
     _gameView = null;
@@ -100,9 +111,9 @@ class EmberFlameGame extends FlameGame {
       final c = camera.position;
       final tl = worldToScreen(vm.Vector2(c.x - camera.designWidth / 2, c.y - camera.designHeight / 2));
       final br = worldToScreen(vm.Vector2(c.x + camera.designWidth / 2, c.y + camera.designHeight / 2));
-      UITextComponent.paintAll(canvas, Rect.fromPoints(tl, br), zoom, scene);
+      _paintUi(canvas, Rect.fromPoints(tl, br), zoom, scene);
     } else {
-      UITextComponent.paintAll(canvas, Offset.zero & screen, 1.0, scene);
+      _paintUi(canvas, Offset.zero & screen, 1.0, scene);
     }
   }
 
@@ -276,6 +287,11 @@ class EmberFlameGame extends FlameGame {
     }
   }
 
+  /// Sheet cells are sampled this far (in texels) inside their edges. Without
+  /// it, a screen pixel landing exactly on a tile edge can pick up the first
+  /// texel of the neighbouring cell (a thin coloured seam across the level).
+  static const double _texelInset = 0.02;
+
   void _renderTileMap(Canvas canvas, FlameTileMapComponent tilemap, {required bool outlineEmpty}) {
     final ts = tilemap.tileSize;
     final tilePaint = Paint()..style = PaintingStyle.fill;
@@ -305,7 +321,7 @@ class EmberFlameGame extends FlameGame {
             final cell = tilemap.tilesetTileSize.toDouble();
             final i = tid - 1;
             final src = Rect.fromLTWH((i % tilemap.tilesetColumns) * cell, (i ~/ tilemap.tilesetColumns) * cell, cell, cell);
-            canvas.drawImageRect(tileset, src, rect, imagePaint);
+            canvas.drawImageRect(tileset, src.deflate(_texelInset), rect, imagePaint);
           } else {
             // Palette color representation based on tile ID
             final hue = (tid * 45.0) % 360.0;
@@ -342,7 +358,7 @@ class EmberFlameGame extends FlameGame {
         canvas.translate(sprite.flipX ? size.x : 0, sprite.flipY ? size.y : 0);
         canvas.scale(sprite.flipX ? -1 : 1, sprite.flipY ? -1 : 1);
       }
-      canvas.drawImageRect(image, src, rect, imagePaint);
+      canvas.drawImageRect(image, cols * rows > 1 ? src.deflate(_texelInset) : src, rect, imagePaint);
       canvas.restore();
       return;
     }

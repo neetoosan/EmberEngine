@@ -16,10 +16,21 @@ void main() {
     await tester.pumpWidget(const EmberEditorApp());
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Ember Quest is the second template card
-    final questCard = find.ancestor(of: find.text('Ember Quest'), matching: find.byType(Container)).first;
-    expect(questCard, findsOneWidget);
-    await tester.tap(find.text('Create Project').at(1));
+    // Scroll the Ember Quest card into view and press its own Create button
+    // (the one closest below the card title)
+    await tester.ensureVisible(find.text('Ember Quest'));
+    await tester.pump(const Duration(milliseconds: 100));
+    final title = tester.getCenter(find.text('Ember Quest'));
+    final buttons = find.text('Create Project').evaluate().toList()
+      ..sort((a, b) {
+        double d(Element e) {
+          final c = tester.getCenter(find.byElementPredicate((x) => x == e));
+          return c.dy < title.dy ? double.infinity : (c - title).distance;
+        }
+
+        return d(a).compareTo(d(b));
+      });
+    await tester.tap(find.byElementPredicate((e) => e == buttons.first));
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('New Ember Project Wizard'), findsOneWidget);
     await tester.tap(find.text('Create & Launch Editor'));

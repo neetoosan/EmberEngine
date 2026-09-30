@@ -20,7 +20,13 @@ import '../../subsystems/particles/particle_system.dart';
 import '../../subsystems/two_d/camera2d.dart';
 import '../../subsystems/two_d/parallax.dart';
 import '../../subsystems/two_d/sprite_animator.dart';
+import '../../subsystems/ai/monster_ai.dart';
+import '../../subsystems/combat/combat.dart';
+import '../../subsystems/two_d/door.dart';
+import '../../subsystems/two_d/top_down_controller.dart';
+import '../../subsystems/ui/dialogue.dart';
 import '../../subsystems/ui/ui_text.dart';
+import '../../subsystems/ui/ui_widgets.dart';
 import '../hub/project_assets.dart';
 import '../theme/ember_theme.dart';
 import 'property_card.dart';
@@ -1554,6 +1560,32 @@ class _InspectorPanelState extends State<InspectorPanel> {
           case 'Parallax':
             entity.addComponent(ParallaxLayerComponent());
             break;
+          case 'TopDown':
+            entity.addComponent(TopDownController2DComponent());
+            break;
+          case 'Health':
+            entity.addComponent(HealthComponent());
+            break;
+          case 'MonsterAI':
+            if (!entity.hasComponent<TopDownController2DComponent>()) entity.addComponent(TopDownController2DComponent(moveSpeed: 70));
+            if (!entity.hasComponent<HealthComponent>()) entity.addComponent(HealthComponent());
+            entity.addComponent(MonsterAIComponent());
+            break;
+          case 'UIButton':
+            entity.addComponent(UIButtonComponent());
+            break;
+          case 'UIBar':
+            entity.addComponent(UIBarComponent());
+            break;
+          case 'UIImage':
+            entity.addComponent(UIImageComponent());
+            break;
+          case 'Dialogue':
+            entity.addComponent(DialogueComponent());
+            break;
+          case 'Door':
+            entity.addComponent(DoorComponent());
+            break;
         }
         setState(() {});
       },
@@ -1577,6 +1609,16 @@ class _InspectorPanelState extends State<InspectorPanel> {
         PopupMenuItem(value: 'UIText', child: Text('UI Text (on-screen)', style: TextStyle(fontSize: 11))),
         PopupMenuItem(value: 'SpriteAnimator', child: Text('Sprite Animator', style: TextStyle(fontSize: 11))),
         PopupMenuItem(value: 'Parallax', child: Text('Parallax Layer', style: TextStyle(fontSize: 11))),
+        PopupMenuDivider(height: 1),
+        PopupMenuItem(enabled: false, child: Text('--- Top-Down / RPG ---', style: TextStyle(fontSize: 10, color: EmberTheme.textMuted))),
+        PopupMenuItem(value: 'TopDown', child: Text('Top-Down Controller 2D', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'Health', child: Text('Health', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'MonsterAI', child: Text('Monster AI', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'Dialogue', child: Text('Dialogue (NPC talk)', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'Door', child: Text('Door (go to scene)', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'UIButton', child: Text('UI Button', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'UIBar', child: Text('UI Bar (health/XP)', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'UIImage', child: Text('UI Image (hearts/icons)', style: TextStyle(fontSize: 11))),
         PopupMenuDivider(height: 1),
         PopupMenuItem(enabled: false, child: Text('--- Core Subsystems ---', style: TextStyle(fontSize: 10, color: EmberTheme.textMuted))),
         PopupMenuItem(value: 'AudioSource', child: Text('Audio Source', style: TextStyle(fontSize: 11))),

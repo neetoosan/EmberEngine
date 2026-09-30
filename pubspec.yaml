@@ -66,6 +66,7 @@ flutter:
   assets:
     - assets/templates/flappy/
     - assets/templates/quest/
+    - assets/templates/legends/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

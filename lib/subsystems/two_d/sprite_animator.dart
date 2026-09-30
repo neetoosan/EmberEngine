@@ -74,6 +74,8 @@ class SpriteAnimatorComponent extends EmberComponent {
     return clip != null && !clip.loop && _time * clip.fps >= clip.count - 1;
   }
 
+  bool hasClip(String name) => _clip(name) != null;
+
   SpriteClip? _clip(String name) {
     for (final c in clips) {
       if (c.name == name) return c;

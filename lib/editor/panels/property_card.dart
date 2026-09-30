@@ -96,7 +96,13 @@ class GenericComponentCard extends StatelessWidget {
           ],
         );
       case InspectableType.string:
-        return _StringPropertyField(label: p.label, value: value as String, onSubmitted: (v) => _set(p, v));
+        return _StringPropertyField(
+          label: p.label,
+          value: value as String,
+          onSubmitted: (v) => _set(p, v),
+          multiline: p.multiline,
+          describe: p.hasDescription ? (v) => p.describeValue(v) ?? '' : null,
+        );
       case InspectableType.color:
         return Row(
           children: [
@@ -206,8 +212,16 @@ class _StringPropertyField extends StatefulWidget {
   final String label;
   final String value;
   final ValueChanged<String> onSubmitted;
+  final bool multiline;
+  final String Function(String value)? describe;
 
-  const _StringPropertyField({required this.label, required this.value, required this.onSubmitted});
+  const _StringPropertyField({
+    required this.label,
+    required this.value,
+    required this.onSubmitted,
+    this.multiline = false,
+    this.describe,
+  });
 
   @override
   State<_StringPropertyField> createState() => _StringPropertyFieldState();
@@ -244,14 +258,22 @@ class _StringPropertyFieldState extends State<_StringPropertyField> {
 
   @override
   Widget build(BuildContext context) {
+    final describe = widget.describe;
     return TextField(
       controller: _controller,
       focusNode: _focus,
       onSubmitted: (_) => _commit(),
+      onChanged: describe == null ? null : (_) => setState(() {}),
+      minLines: widget.multiline ? 3 : 1,
+      maxLines: widget.multiline ? 10 : 1,
+      keyboardType: widget.multiline ? TextInputType.multiline : TextInputType.text,
       style: const TextStyle(fontSize: 11, color: EmberTheme.textPrimary),
       decoration: InputDecoration(
         isDense: true,
         labelText: widget.label,
+        helperText: describe?.call(_controller.text),
+        helperStyle: const TextStyle(fontSize: 10, color: EmberTheme.textSecondary),
+        helperMaxLines: 3,
         labelStyle: const TextStyle(fontSize: 11, color: EmberTheme.textSecondary),
         filled: true,
         fillColor: EmberTheme.surfaceCard,

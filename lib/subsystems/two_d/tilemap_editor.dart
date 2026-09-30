@@ -40,8 +40,35 @@ class _TilemapPaletteWidgetState extends State<TilemapPaletteWidget> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([TileBrush.instance, EmberAssets.instance]),
+      listenable: Listenable.merge([TileBrush.instance, EmberAssets.instance, widget.engine]),
       builder: (context, _) => _build(context),
+    );
+  }
+
+  /// Chooses which tilemap (layer) to paint when a scene has several,
+  /// e.g. a Ground layer and a solid Obstacles layer.
+  Widget _layerPicker(EmberEntity current) {
+    final layers = [
+      for (final e in widget.engine.activeScene.allEntities)
+        if (e.hasComponent<FlameTileMapComponent>() && e.hasComponent<Transform2DComponent>()) e,
+    ];
+    if (layers.length < 2) {
+      return Text('"${current.name}"', style: const TextStyle(color: Colors.white, fontSize: 11));
+    }
+    return DropdownButton<EmberEntity>(
+      value: layers.contains(current) ? current : null,
+      isDense: true,
+      dropdownColor: _card,
+      underline: const SizedBox.shrink(),
+      style: const TextStyle(color: Colors.white, fontSize: 11),
+      items: [
+        for (final e in layers)
+          DropdownMenuItem(
+            value: e,
+            child: Text(e.getComponent<FlameTileMapComponent>()!.collision ? e.name : '${e.name} (walkable)'),
+          ),
+      ],
+      onChanged: (e) => widget.engine.selectEntity(e),
     );
   }
 
@@ -67,8 +94,12 @@ class _TilemapPaletteWidgetState extends State<TilemapPaletteWidget> {
               const Text('Tile Palette', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
               const SizedBox(width: 12),
               if (map != null) ...[
+                const Text('Layer', style: TextStyle(color: _muted, fontSize: 11)),
+                const SizedBox(width: 6),
+                _layerPicker(targetEntity!),
+                const SizedBox(width: 8),
                 Text(
-                  'Painting into "${targetEntity!.name}"  ${map.columns}×${map.rows}',
+                  '${map.columns}×${map.rows}${map.collision ? '' : '  (no collision)'}',
                   style: const TextStyle(color: _muted, fontSize: 11),
                 ),
                 const Spacer(),

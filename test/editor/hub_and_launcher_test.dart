@@ -11,7 +11,7 @@ void main() {
   group('Ember Startup Hub & Template System Tests', () {
     test('TemplateCatalog has all 4 official starter templates', () {
       final templates = TemplateCatalog.templates;
-      expect(templates.length, 6);
+      expect(templates.length, 7);
 
       final types = templates.map((t) => t.type).toSet();
       expect(types, contains(ProjectTemplateType.platformer2d));
@@ -126,10 +126,14 @@ void main() {
 
     // Verify the 5 template cards are displayed
     expect(find.text('2D Platformer Adventure'), findsOneWidget);
-    expect(find.text('3D FPS Arena'), findsOneWidget);
-    expect(find.text('Flappy Arcade'), findsOneWidget);
+    expect(find.text('Ember Legends'), findsOneWidget);
     // Later cards are further down the scrolling template grid
-    final grid = find.ancestor(of: find.text('3D FPS Arena'), matching: find.byType(Scrollable)).first;
+    final gridElement = find.ancestor(of: find.text('2D Platformer Adventure'), matching: find.byType(Scrollable)).evaluate().first;
+    final grid = find.byElementPredicate((e) => e == gridElement);
+    await tester.scrollUntilVisible(find.text('Flappy Arcade'), 300, scrollable: grid);
+    expect(find.text('Flappy Arcade'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('3D FPS Arena'), 300, scrollable: grid);
+    expect(find.text('3D FPS Arena'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Procedural Particle Playground'), 300, scrollable: grid);
     expect(find.text('Procedural Particle Playground'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Blank Canvas Project'), 300, scrollable: grid);

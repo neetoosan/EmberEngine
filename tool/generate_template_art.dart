@@ -2,11 +2,14 @@
 //
 //   dart run tool/generate_template_art.dart
 //
-// Output: assets/templates/flappy/*.png and assets/templates/quest/*
+// Output: assets/templates/flappy/*.png, assets/templates/quest/* and
+// assets/templates/legends/*
 // (committed, so this only needs to be re-run after changing the art below).
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
+part 'legends_art.dart';
 
 void main() {
   void save(String folder, String name, _Img img) {
@@ -35,6 +38,9 @@ void main() {
   save('quest', 'bg_clouds.png', _bgClouds());
   final music = File('assets/templates/quest/theme.wav')..writeAsBytesSync(_questTheme());
   stdout.writeln('wrote ${music.path} (${music.lengthSync() ~/ 1024} KB)');
+
+  // Ember Legends (top-down action RPG)
+  _saveLegends(save);
 }
 
 // ---------------------------------------------------------------------------

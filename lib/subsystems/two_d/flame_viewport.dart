@@ -13,6 +13,7 @@ import '../physics/character_controller2d.dart';
 import 'camera2d.dart';
 import 'flame_components.dart';
 import 'tilemap_editor.dart';
+import '../ui/ui_widgets.dart';
 import 'flame_game.dart';
 
 /// Interactive Viewport Widget for the 2D Flame Subsystem.
@@ -104,6 +105,7 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
   bool get _isRunning => widget.engine.playState != PlayState.stopped;
 
   void _forwardGamePointer(PointerEvent event) {
+    UIRenderer.pointer = event.localPosition;
     Input.onMouseMove(
       vm.Vector2(event.localPosition.dx, event.localPosition.dy),
       vm.Vector2(event.delta.dx, event.delta.dy),
@@ -132,7 +134,12 @@ class _FlameViewportWidgetState extends State<FlameViewportWidget> {
   void _handlePointerDown(PointerDownEvent event) {
     _lastPanPos = event.localPosition;
     if (_isRunning) {
-      // Clicks and touches are gameplay input while the game runs
+      // UI buttons take clicks first; everything else is gameplay input
+      final button = UIRenderer.buttonAt(widget.engine.activeScene, _game.uiView, _game.uiScale, event.localPosition);
+      if (button != null) {
+        UIRenderer.dispatch(widget.engine.activeScene, button.action);
+        return;
+      }
       _forwardGamePointer(event);
       Input.onMouseDown(_buttonIndex(event.buttons));
       return;

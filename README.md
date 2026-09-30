@@ -25,6 +25,7 @@ The **Project Hub** opens first. Pick a starter template:
 
 | Template | What you get when you press Play |
 |---|---|
+| Ember Legends | A top-down monster-slaying RPG: title screen, village with NPCs, field and dungeon, sword combat, slimes/bats/skeleton archers, the Ember Golem boss, XP & levels, gold, potions, save & continue, music |
 | Ember Quest | A Mario-style platformer: 2 levels, stomp slimes, "?" blocks, bricks, power berry, spikes, pits, lives, score, music |
 | Flappy Arcade | A complete Flappy Bird-style game: flap between random pipes, score, best score, restart |
 | 3D FPS Arena | First-person movement, mouse-look, shooting a target bot |
@@ -53,6 +54,9 @@ While the game runs, keys go to the game:
 - **2D platformer / Ember Quest**: `A`/`D` or arrows move; `Space`, `W` or `Up`
   jump (hold for higher); `Shift` run. Land on slimes to squash them, hit
   "?" blocks from below, eat the berry to grow (big heroes break bricks).
+- **Ember Legends**: `WASD`/arrows move; `Space`, `J` or click swings the sword;
+  `E` talks (Elder, Merchant, save crystal); `Q` drinks a potion; `Esc` pauses
+  (Resume / Save Game / Quit to Title).
 
 ## Project folder format
 
@@ -78,8 +82,9 @@ source, not inside project files:
    from the dropdown.
 
 Built-in scripts: `FPS Player Controller`, `Platformer 2D Controller`,
-`Procedural Rotator`, `Collectible`, `Hover Bob`, and the Flappy Arcade
-scripts (`lib/templates/flappy_game.dart` is a complete worked example).
+`Procedural Rotator`, `Collectible`, `Hover Bob`, and the template scripts
+(`lib/templates/flappy_game.dart`, `quest_game.dart` and `legends_game.dart`
+are complete worked examples).
 
 What a script can do:
 
@@ -113,6 +118,35 @@ class Enemy extends GameScript {
   `idle=0-1@3; run=2-4@12; jump=5; die=6@1!` (`!` = play once). Scripts call
   `animator.play('run')`; the Platformer 2D Controller does this automatically.
 - **Parallax Layer:** backgrounds that scroll slower than the camera and repeat sideways.
+
+## Top-down games and RPGs
+
+`lib/templates/legends_game.dart` is a complete worked example of all of these.
+
+- **Top-Down Controller 2D:** 8-way movement that slides along solid tiles;
+  call `move(direction, dt)` from a script. Knockback is built in.
+- **Health:** hit points with a team (no friendly fire), a hit flash and
+  invulnerability time. Scripts get `onDamaged`, `onDeath`, and the attacker gets
+  `onKill(victim)` (award XP there). `Combat.strike(scene, rect, team:, damage:)`
+  is a sword swing; a **Projectile** is an arrow or fireball.
+- **Monster AI:** wander → notice the target (tag `player`) → chase, walking
+  around walls with A* pathfinding → melee or ranged attack → give up and go
+  home. Sight/attack ranges, damage, cooldown, wind-up, projectile sprite and
+  XP reward are all Inspector settings.
+- **Door:** touching it (or pressing `E`, if set) fades out and loads another
+  scene, placing the player on the entity named in *Arrive At*.
+- **Dialogue:** lines like `Elder: Beware the caves.` shown in a typewriter box
+  when the player interacts (`Interaction.interact(scene, player)`); game time
+  pauses while it is open.
+- **UI Button / UI Bar / UI Image:** clickable menus (with hotkeys), health and
+  XP bars, rows of hearts. Buttons send their action to every script's
+  `onUIAction`.
+- **Layers:** a scene can have several tilemaps (e.g. a walkable *Ground* and a
+  solid *Obstacles* layer); untick *Collision* on decoration layers and pick the
+  layer to paint in the Tile Palette.
+- **Progress:** `Inventory` (items + gold), `SaveSlots.save(1, {...})` /
+  `load(1)`, `EmberTween.run(...)` for animations, and
+  `EmberEngine.instance.timeScale = 0` to pause the game behind a menu.
 
 ## Building levels (platformers)
 

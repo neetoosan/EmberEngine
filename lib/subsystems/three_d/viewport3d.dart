@@ -9,7 +9,7 @@ import '../../core/event_bus.dart';
 import '../../core/input.dart';
 import '../../core/transform3d.dart';
 import '../physics/character_controller3d.dart';
-import '../ui/ui_text.dart';
+import '../ui/ui_widgets.dart';
 import 'camera3d.dart';
 import 'components3d.dart';
 import 'gizmos3d.dart';
@@ -508,7 +508,7 @@ class _Renderer3DPainter extends CustomPainter {
     );
 
     // On-screen UI text (score, messages)
-    UITextComponent.paintAll(canvas, Offset.zero & size, 1.0, engine.activeScene);
+    UIRenderer.paintAll(canvas, Offset.zero & size, 1.0, engine.activeScene);
 
     // 3. Render 3D Transform Gizmo (editor view only)
     if (isGameView) return;

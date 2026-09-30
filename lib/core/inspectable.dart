@@ -29,6 +29,12 @@ class InspectableProperty<T> {
   final String? group;
   final String? tooltip;
 
+  /// Strings: edit in a multi-line box (Enter adds a line; commits on blur).
+  final bool multiline;
+
+  /// Optional live summary shown under the field (e.g. "3 lines · Elder, Hero").
+  final String Function(T value)? describe;
+
   const InspectableProperty({
     required this.name,
     required this.label,
@@ -41,6 +47,8 @@ class InspectableProperty<T> {
     this.options,
     this.group,
     this.tooltip,
+    this.multiline = false,
+    this.describe,
   });
 
   T get value => getter();
@@ -48,6 +56,9 @@ class InspectableProperty<T> {
 
   dynamic getValue() => getter();
   void setValue(dynamic val) => setter(val as T);
+
+  bool get hasDescription => describe != null;
+  String? describeValue(dynamic val) => describe?.call(val as T);
 }
 /// Annotation for marking fields as inspectable in Ember Engine components.
 class Inspectable {

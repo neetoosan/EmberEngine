@@ -2,6 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'event_bus.dart';
 import 'input.dart';
+import 'tween.dart';
+import '../subsystems/two_d/door.dart';
+import '../subsystems/ui/dialogue.dart';
+import '../subsystems/ui/ui_widgets.dart';
 import 'scene.dart';
 import 'entity.dart';
 import '../subsystems/audio/audio_system.dart';
@@ -54,6 +58,7 @@ class EmberEngine with ChangeNotifier {
   Duration _lastTick = Duration.zero;
 
   void _init() {
+    DialogueSystem.instance.setTimeScale = (s) => timeScale = s;
     _activeScene = EmberScene.createDefault3DScene();
     _activeScene.addListener(_notifyUi);
     log('Ember Engine initialized in 3D Mode', severity: LogSeverity.info, source: 'Core');
@@ -176,7 +181,7 @@ class EmberEngine with ChangeNotifier {
       play();
       pause();
     }
-    _simulate(fixedTimestep);
+    _gameFrame(fixedTimestep);
     tick(fixedTimestep);
     log('Stepped 1 frame (${(fixedTimestep * 1000).toStringAsFixed(1)}ms)', source: 'Runtime');
     notifyListeners();
@@ -189,6 +194,12 @@ class EmberEngine with ChangeNotifier {
     _playState = PlayState.stopped;
     _pendingSceneChange = null;
     _runningSceneJson = null;
+    spawnPoint = null;
+    timeScale = 1;
+    EmberTween.clear();
+    DialogueSystem.instance.close();
+    UIRenderer.fade = 0;
+    Doors.reset();
     _activeScene.isRunning = false;
     AudioSystem.instance.stopAll();
     Input.reset();
@@ -236,6 +247,15 @@ class EmberEngine with ChangeNotifier {
   }
 
   /// Master frame update.
+  /// One frame of the running game: physics + scripts on scaled game time,
+  /// then tweens, dialogue and UI hotkeys on real time.
+  void _gameFrame(double dt) {
+    if (timeScale > 0) _simulate(dt * timeScale);
+    EmberTween.update(dt);
+    DialogueSystem.instance.update(dt);
+    UIRenderer.update(_activeScene);
+  }
+
   void tick(double dt) {
     // 1. Calculate FPS & timing metrics
     _frameTimeMs = dt * 1000.0;
@@ -247,10 +267,8 @@ class EmberEngine with ChangeNotifier {
       _fpsAccumulator = 0.0;
     }
 
-    // 2-3. Physics + scripts
-    if (_playState == PlayState.playing) {
-      _simulate(dt);
-    }
+    // 2-3. Physics + scripts (scaled game time), then tweens / UI (real time)
+    if (_playState == PlayState.playing) _gameFrame(dt);
 
     // 4. Update audio system (ducking, spatial audio, voice cleanup)
     final listener = _findAudioListener();
@@ -349,22 +367,41 @@ class EmberEngine with ChangeNotifier {
 
   /// Switches the running game to the project scene called [name]
   /// (e.g. `loadLevel('Level 2')`). Returns false if there is no such scene.
-  bool loadLevel(String name) {
+  /// [spawnAt] names an entity (e.g. a door) where the player should appear;
+  /// player scripts read it from [spawnPoint] when the level starts.
+  bool loadLevel(String name, {String? spawnAt}) {
     final json = sceneLibrary?.call()[name];
     if (json == null) {
       log('No scene named "$name" to load', severity: LogSeverity.warning, source: 'Runtime');
       return false;
     }
+    spawnPoint = spawnAt;
     _pendingSceneChange = () => _startRunningScene(EmberScene.fromJson(json), json: json);
     return true;
   }
+
+  /// Entity name the player should appear at after [loadLevel] (null = default start).
+  String? spawnPoint;
+
+  /// Speed of game time: 1 normal, 0 paused (menus, dialogue), 0.1 slow motion.
+  /// Tweens and UI keep running on real time.
+  double timeScale = 1;
 
   /// JSON of the scene currently being played, for [restartScene].
   Map<String, dynamic>? _runningSceneJson;
 
   void _startRunningScene(EmberScene scene, {Map<String, dynamic>? json}) {
     if (json != null) _runningSceneJson = json;
+    EmberTween.clear();
+    DialogueSystem.instance.close();
+    timeScale = 1;
+    Doors.reset();
     loadScene(scene);
+    Doors.placePlayerAtSpawn(scene);
+    if (UIRenderer.fade > 0) {
+      final from = UIRenderer.fade;
+      EmberTween.run(0.3, (t) => UIRenderer.fade = from * (1 - t));
+    }
     // Keep keys the player is still holding (e.g. Right after a respawn);
     // only drop this frame's one-shot presses.
     Input.endFrame();

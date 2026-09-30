@@ -419,6 +419,10 @@ class FlameTileMapComponent extends EmberComponent {
   int tilesetTileSize;
   final Map<int, TileKind> tileKinds;
 
+  /// Whether characters collide with this layer. Turn off for decoration
+  /// layers (e.g. tree tops drawn above the player with a higher Z-Index).
+  bool collision;
+
   FlameTileMapComponent({
     this._columns = 16,
     this._rows = 12,
@@ -428,6 +432,7 @@ class FlameTileMapComponent extends EmberComponent {
     this.tilesetColumns = 8,
     this.tilesetTileSize = 16,
     Map<int, TileKind>? tileKinds,
+    this.collision = true,
   }) : tileKinds = tileKinds ?? {} {
     _tiles = tiles ?? List.filled(_columns * _rows, 0);
   }
@@ -514,6 +519,15 @@ class FlameTileMapComponent extends EmberComponent {
   int getTile(int col, int row) {
     if (col < 0 || col >= _columns || row < 0 || row >= _rows) return 0;
     return _tiles[row * _columns + col];
+  }
+
+  /// Increments whenever tiles, size or tile kinds change (for caches such as pathfinding grids).
+  int revision = 0;
+
+  @override
+  void notifyListeners() {
+    revision++;
+    super.notifyListeners();
   }
 
   void setTile(int col, int row, int tileId) {
@@ -606,11 +620,23 @@ class FlameTileMapComponent extends EmberComponent {
           min: 1,
           step: 1,
         ),
+        InspectableProperty<bool>(
+          name: 'collision',
+          label: 'Collision Layer',
+          type: InspectableType.boolean,
+          getter: () => collision,
+          setter: (val) {
+            collision = val;
+            notifyListeners();
+          },
+          tooltip: 'Off for decoration layers characters walk through',
+        ),
       ];
 
   @override
   Map<String, dynamic> toJson() {
     return {
+      'collision': collision,
       'columns': _columns,
       'rows': _rows,
       'tileSize': _tileSize,
@@ -633,6 +659,7 @@ class FlameTileMapComponent extends EmberComponent {
     } else {
       _tiles = List.filled(_columns * _rows, 0);
     }
+    collision = json['collision'] as bool? ?? true;
     tilesetPath = json['tilesetPath'] as String? ?? '';
     tilesetColumns = (json['tilesetColumns'] as num?)?.toInt() ?? 8;
     tilesetTileSize = (json['tilesetTileSize'] as num?)?.toInt() ?? 16;
@@ -659,6 +686,7 @@ class FlameTileMapComponent extends EmberComponent {
       tilesetColumns: tilesetColumns,
       tilesetTileSize: tilesetTileSize,
       tileKinds: Map.of(tileKinds),
+      collision: collision,
     );
   }
 }

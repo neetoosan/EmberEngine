@@ -18,8 +18,15 @@ import '../subsystems/two_d/camera2d.dart';
 import '../subsystems/two_d/flame_components.dart';
 import '../subsystems/two_d/parallax.dart';
 import '../subsystems/two_d/sprite_animator.dart';
+import '../subsystems/ai/monster_ai.dart';
+import '../subsystems/combat/combat.dart';
+import '../subsystems/two_d/door.dart';
+import '../subsystems/two_d/top_down_controller.dart';
+import '../subsystems/ui/dialogue.dart';
 import '../subsystems/ui/ui_text.dart';
+import '../subsystems/ui/ui_widgets.dart';
 import '../templates/flappy_game.dart';
+import '../templates/legends_game.dart';
 import '../templates/quest_game.dart';
 
 /// Represents an entire game scene in Ember Engine.
@@ -442,9 +449,16 @@ class EmberScene with ChangeNotifier {
     registerParallax();
     registerSpriteAnimator();
     registerUIComponents();
+    registerUIWidgets();
+    registerDialogueComponent();
+    registerCombatComponents();
+    registerTopDownController();
+    registerMonsterAI();
+    registerDoorComponent();
     registerStandardGameplayScripts();
     registerFlappyScripts();
     registerQuestScripts();
+    registerLegendsScripts();
   }
 }
 

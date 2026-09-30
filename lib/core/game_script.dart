@@ -57,6 +57,21 @@ abstract class GameScript {
 
   /// This character is touching a [TileKind.hazard] tile (spikes, lava).
   void onTileTouch(TileHit tile) {}
+
+  /// This entity's Health component took [amount] damage from [source].
+  void onDamaged(double amount, EmberEntity? source) {}
+
+  /// This entity's Health component reached zero.
+  void onDeath(EmberEntity? killer) {}
+
+  /// This entity (or a projectile it fired) killed [victim] — e.g. to award XP.
+  void onKill(EmberEntity victim) {}
+
+  /// A UI Button with this action was clicked (sent to every script in the scene).
+  void onUIAction(String action) {}
+
+  /// [by] (usually the player) interacted with this entity (e.g. pressed E next to it).
+  void onInteract(EmberEntity by) {}
 }
 
 /// Factory signature for instantiating custom GameScripts by name.
