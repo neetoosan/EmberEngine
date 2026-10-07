@@ -66,8 +66,15 @@ class EmberAssets extends ChangeNotifier {
     }
   }
 
-  /// Raw bytes of an asset: project/game folder first, then the engine bundle.
+  /// Files that came inside the game package (web / Android exports), by
+  /// project-relative path. Checked before anything else.
+  final Map<String, Uint8List> embedded = {};
+
+  /// Raw bytes of an asset: embedded in the game package, the project/game
+  /// folder, then the engine bundle.
   Future<Uint8List?> readBytes(String path) async {
+    final inPackage = embedded[path];
+    if (inPackage != null) return inPackage;
     final file = resolveFile(path);
     if (file != null && await file.exists()) return file.readAsBytes();
     try {

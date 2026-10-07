@@ -12,6 +12,8 @@ import 'package:ember_engine/core/scene.dart';
 import 'package:ember_engine/core/transform2d.dart';
 import 'package:ember_engine/editor/hub/project_storage.dart';
 import 'package:ember_engine/editor/hub/template_manifest.dart';
+import 'package:ember_engine/scripting/api.dart' show spawnCopy;
+import 'package:ember_engine/scripting/script_library.dart';
 import 'package:ember_engine/subsystems/ai/monster_ai.dart';
 import 'package:ember_engine/subsystems/ai/pathfinding.dart';
 import 'package:ember_engine/subsystems/combat/combat.dart';
@@ -20,14 +22,19 @@ import 'package:ember_engine/subsystems/ui/dialogue.dart';
 import 'package:ember_engine/subsystems/ui/ui_text.dart';
 import 'package:ember_engine/subsystems/ui/ui_widgets.dart';
 import 'package:ember_engine/templates/legends_game.dart';
+import 'package:ember_engine/templates/legends_scripts.dart';
 
 EmberEngine get engine => EmberEngine.instance;
 EmberScene get scene => engine.activeScene;
 EmberEntity? get heroEntity => scene.findByName('Hero');
-LegendsHero get hero => heroEntity!.getComponent<ScriptComponent>()!.scriptInstance as LegendsHero;
+EmberScriptBehavior get hero => heroEntity!.getComponent<ScriptComponent>()!.scriptInstance as EmberScriptBehavior;
 HealthComponent get heroHealth => heroEntity!.getComponent<HealthComponent>()!;
 Vector2 get heroCenter => Legends.centerOf(heroEntity!);
 String text(String e) => scene.findByName(e)!.getComponent<UITextComponent>()!.text;
+
+/// Level, XP, gold, potions... kept in Game.data by the hero script.
+Map<Object?, Object?> get session => EmberScripts.instance.gameData;
+bool get saved => SaveData.instance.has('legends_save');
 
 void frames(int n, {Set<LogicalKeyboardKey> hold = const {}}) {
   for (var i = 0; i < n; i++) {
@@ -64,6 +71,7 @@ void clearMonsters() {
 }
 
 List<EmberEntity> get monsters => scene.allEntities.where((e) => e.tags.contains('monster') && e.enabled).toList();
+List<EmberEntity> get pickups => scene.allEntities.where((e) => e.tags.contains('pickup') && e.enabled).toList();
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -80,9 +88,8 @@ void main() {
     engine.stop();
     engine.preserveSceneOnModeSwitch = false;
     engine.setMode(EngineMode.twoD);
-    LegendsSession.reset();
-    SaveSlots.delete(Legends.saveSlot);
-    Legends.rng = math.Random(7);
+    SaveData.instance.remove('legends_save');
+    EmberScripts.instance.loadAll(legendsScripts);
     library = {
       Legends.title: buildLegendsTitle().toJson(),
       Legends.village: buildLegendsVillage().toJson(),
@@ -93,24 +100,36 @@ void main() {
   });
 
   tearDown(() {
+    expect(EmberScripts.instance.problems.map((p) => '$p'), isEmpty, reason: 'scripts ran without errors');
     engine.stop();
     engine.sceneLibrary = null;
   });
 
-  test('template: four scenes, starts on the title, all art and music bundled', () async {
+  test('template: four scenes, starts on the title, editable scripts, all art and music bundled', () async {
     final project = TemplateCatalog.getByType(ProjectTemplateType.legends).createProject(name: 'Legends');
     expect(project.scenes.keys, [Legends.title, Legends.village, Legends.field, Legends.dungeon]);
     expect(project.defaultSceneName, Legends.title);
+    expect(project.scripts.keys, containsAll(legendsScripts.keys));
+    for (final e in project.scripts.entries) {
+      expect(EmberScripts.check(e.key, e.value), isNull, reason: e.key);
+    }
+    for (final s in project.scenes.values) {
+      for (final e in s.allEntities) {
+        for (final c in e.components.whereType<ScriptComponent>()) {
+          expect(project.scripts.keys, contains(c.scriptName), reason: '${e.name} uses ${c.scriptName}');
+        }
+      }
+    }
     final files = {...ProjectStorage.referencedAssetPaths(project), ...project.assets};
     expect(files, containsAll([Legends.music, Legends.dungeonMusic, '${Legends.art}/arrow.png', '${Legends.art}/slash.png']));
     for (final f in files) {
       expect((await rootBundle.load(f)).lengthInBytes, greaterThan(0), reason: f);
     }
-    // Every game scene has a hero and a HUD
     for (final name in [Legends.village, Legends.field, Legends.dungeon]) {
       final s = project.scenes[name]!;
       expect(s.findByName('Hero'), isNotNull, reason: name);
       expect(s.findByName('Hearts'), isNotNull, reason: name);
+      expect(s.findByName('Gold Template')?.enabled, isFalse, reason: name);
     }
   });
 
@@ -118,12 +137,12 @@ void main() {
     start(Legends.title);
     expect(scene.findByName('Continue')!.enabled, isFalse);
     UIRenderer.dispatch(scene, 'new');
-    frames(2);
+    frames(20);
     expect(scene.name, Legends.village);
     expect(text('Banner'), 'Oakvale Village');
     expect(text('Hint'), contains('Elder'));
 
-    Legends.save(heroEntity!);
+    hero.callFunction('save', []);
     engine.loadLevel(Legends.title);
     frames(2);
     expect(scene.findByName('Continue')!.enabled, isTrue);
@@ -152,25 +171,31 @@ void main() {
     expect(heroCenter.distanceTo(cell(28, 10)), lessThan(40));
   });
 
-  test('sword kills a slime: XP, loot, and the loot can be picked up', () {
+  test('sword kills a slime: XP, loot from the templates, and pickups work', () {
     start(Legends.field);
     clearMonsters();
     placeHero(cell(5, 20));
     final slime = LegendsLevelBuilder.monster('s', heroCenter + Vector2(34, 0), 'Test Slime');
     scene.addEntity(slime);
+    final pickupsBefore = pickups.length;
     frames(3, hold: {LogicalKeyboardKey.keyD}); // face right
     for (var i = 0; i < 6 && slime.scene != null; i++) {
       tap(LogicalKeyboardKey.space);
       frames(20);
     }
     expect(slime.scene, isNull, reason: 'slime slain');
-    expect(LegendsSession.xp, 3);
+    expect(session['xp'], 3);
+    expect(scene.allEntities.any((e) => e.name == 'Slash Template' && e.enabled), isFalse, reason: 'slash effects clean up');
 
-    final gold0 = LegendsSession.inventory.gold;
-    Legends.spawnPickup(scene, 'gold', heroCenter, amount: 4);
+    final gold0 = session['gold'] as num;
+    final gold = spawnCopy(scene.findByName('Gold Template')!, heroCenter);
+    gold.tags
+      ..remove('gold:5')
+      ..add('gold:4');
     frames(20);
-    expect(LegendsSession.inventory.gold, gold0 + 4);
+    expect(session['gold'], gold0 + 4);
     expect(text('Info'), contains('Gold ${gold0 + 4}'));
+    expect(pickups.length, lessThanOrEqualTo(pickupsBefore + 1), reason: 'the picked-up coin is gone');
   });
 
   test('levels up from XP: more hearts and a full heal', () {
@@ -179,9 +204,10 @@ void main() {
     heroHealth.damage(2);
     final bat = LegendsLevelBuilder.monster('v', Vector2.zero(), 'Bat');
     scene.addEntity(bat);
-    LegendsSession.xp = LegendsSession.xpToNext - 1;
-    hero.onKill(bat);
-    expect(LegendsSession.level, 2);
+    frames(1);
+    session['xp'] = 11; // Lv 1 needs 12
+    hero.callFunction('onKill', [bat]);
+    expect(session['level'], 2);
     expect(heroHealth.maxHealth, 6);
     expect(heroHealth.health, 6);
     frames(1);
@@ -206,18 +232,18 @@ void main() {
     tap(LogicalKeyboardKey.keyE);
     expect(DialogueSystem.instance.isOpen, isTrue);
     expect(engine.timeScale, 0);
-    expect(LegendsSession.metElder, isTrue);
+    expect(session['metElder'], isTrue);
     for (var i = 0; i < 12 && DialogueSystem.instance.isOpen; i++) {
       tap(LogicalKeyboardKey.enter);
     }
     expect(DialogueSystem.instance.isOpen, isFalse);
     expect(engine.timeScale, 1);
 
-    LegendsSession.inventory.addGold(12);
+    session['gold'] = 12;
     placeHero(cell(21, 11)); // below the Merchant
     tap(LogicalKeyboardKey.keyE);
-    expect(LegendsSession.inventory.count('Potion'), 1);
-    expect(LegendsSession.inventory.gold, 2);
+    expect(session['potions'], 1);
+    expect(session['gold'], 2);
     while (DialogueSystem.instance.isOpen) {
       tap(LogicalKeyboardKey.enter);
     }
@@ -226,7 +252,7 @@ void main() {
     frames(70); // wait out invulnerability flash
     tap(LogicalKeyboardKey.keyQ);
     expect(heroHealth.health, 5);
-    expect(LegendsSession.inventory.count('Potion'), 0);
+    expect(session['potions'], 0);
   });
 
   test('pause menu stops the game and resumes it', () {
@@ -245,25 +271,29 @@ void main() {
 
   test('save crystal heals and saves; dying reloads the save with progress kept', () {
     start(Legends.village);
-    LegendsSession.addXp(12); // level 2
+    frames(1);
+    session['xp'] = 12;
+    hero.callFunction('addXp', [0]); // level 2
+    heroHealth.maxHealth = 6;
     heroHealth.damage(2);
     placeHero(cell(16, 9)); // below the crystal
     tap(LogicalKeyboardKey.keyE);
     expect(heroHealth.health, heroHealth.maxHealth);
-    expect(SaveSlots.exists(Legends.saveSlot), isTrue);
+    expect(saved, isTrue);
     while (DialogueSystem.instance.isOpen) {
       tap(LogicalKeyboardKey.enter);
     }
 
     engine.loadLevel(Legends.field);
-    frames(3);
-    LegendsSession.inventory.addGold(50); // not saved: lost on death
+    frames(20);
+    expect(scene.name, Legends.field);
+    session['gold'] = 50; // not saved: lost on death
     heroHealth.damage(99);
     expect(text('Banner'), contains('FALLEN'));
     frames(200);
     expect(scene.name, Legends.village);
-    expect(LegendsSession.level, 2);
-    expect(LegendsSession.inventory.gold, 0);
+    expect(session['level'], 2);
+    expect(session['gold'], 0);
     expect(heroCenter.distanceTo(cell(16, 9)), lessThan(4), reason: 'back where the game was saved');
     expect(heroHealth.health, heroHealth.maxHealth);
   });
@@ -286,9 +316,9 @@ void main() {
     }
     frames(2);
     expect(golem.scene, isNull);
-    expect(LegendsSession.bossDefeated, isTrue);
+    expect(session['bossDefeated'], isTrue);
     expect(scene.findByName('Boss Bar')!.enabled, isFalse);
-    expect(scene.allEntities.where((e) => e.tags.contains('pickup')).length, greaterThanOrEqualTo(6));
+    expect(pickups.length, greaterThanOrEqualTo(6));
     expect(text('Hint'), contains('Elder'));
   });
 
@@ -298,18 +328,17 @@ void main() {
     expect(botWalkTo(cell(29, 9), maxFrames: 60 * 20, until: () => scene.name == Legends.field), isTrue, reason: 'reached the field');
 
     var deaths = 0;
-    final killsBefore = <String>{};
+    final visited = <String>{};
     final result = botHunt(
       maxFrames: 60 * 60 * 8,
       onDeath: () => deaths++,
-      onScene: (name) => killsBefore.add(name),
+      onScene: visited.add,
     );
-    expect(killsBefore, containsAll([Legends.field, Legends.dungeon]), reason: 'fought through both areas');
-    expect(result, isTrue, reason: 'Golem defeated (level ${LegendsSession.level}, deaths $deaths, scene ${scene.name})');
-    expect(LegendsSession.bossDefeated, isTrue);
-    expect(LegendsSession.level, greaterThan(2));
+    expect(visited, containsAll([Legends.field, Legends.dungeon]), reason: 'fought through both areas');
+    expect(result, isTrue, reason: 'Golem defeated (level ${session['level']}, deaths $deaths, scene ${scene.name})');
+    expect(session['level'] as int, greaterThan(2));
     // ignore: avoid_print
-    print('autopilot: level ${LegendsSession.level}, deaths $deaths, gold ${LegendsSession.inventory.gold}, '
+    print('autopilot: level ${session['level']}, deaths $deaths, gold ${session['gold']}, '
         'game time ${(_botFrames / 60).toStringAsFixed(0)}s');
   }, timeout: const Timeout(Duration(minutes: 5)));
 }
@@ -388,10 +417,12 @@ bool botWalkTo(Vector2 goal, {required int maxFrames, required bool Function() u
   return until();
 }
 
-/// Hunts every monster in the field, goes down the cave, and fights through
-/// the dungeon to the Golem. Returns true once the Golem is dead.
 int _botFrames = 0;
 
+bool get _bossDefeated => session['bossDefeated'] == true;
+
+/// Hunts every monster in the field, goes down the cave, and fights through
+/// the dungeon to the Golem. Returns true once the Golem is dead.
 bool botHunt({required int maxFrames, void Function()? onDeath, void Function(String scene)? onScene}) {
   var wasDead = false;
   var stuck = 0;
@@ -399,7 +430,7 @@ bool botHunt({required int maxFrames, void Function()? onDeath, void Function(St
   for (var i = 0; i < maxFrames; i++) {
     _botFrames = i;
     onScene?.call(scene.name);
-    if (LegendsSession.bossDefeated) {
+    if (_bossDefeated) {
       botRelease();
       return true;
     }
@@ -420,7 +451,7 @@ bool botHunt({required int maxFrames, void Function()? onDeath, void Function(St
       tap(LogicalKeyboardKey.enter);
       continue;
     }
-    if (health.health <= 2 && LegendsSession.inventory.count('Potion') > 0) {
+    if (health.health <= 2 && ((session['potions'] as num?) ?? 0) > 0) {
       tap(LogicalKeyboardKey.keyQ);
     }
 
@@ -431,10 +462,9 @@ bool botHunt({required int maxFrames, void Function()? onDeath, void Function(St
       continue;
     }
 
-    final targets = monsters;
     EmberEntity? target;
     var best = double.infinity;
-    for (final m in targets) {
+    for (final m in monsters) {
       final d = Legends.centerOf(m).distanceTo(me);
       if (d < best) {
         best = d;
@@ -444,7 +474,7 @@ bool botHunt({required int maxFrames, void Function()? onDeath, void Function(St
 
     // Grab nearby hearts when hurt
     if (health.health < health.maxHealth - 1) {
-      for (final p in scene.allEntities.where((e) => e.tags.contains('pickup'))) {
+      for (final p in pickups) {
         final pc = Legends.centerOf(p);
         if (pc.distanceTo(me) < 90 && best > 70) {
           target = p;
@@ -467,12 +497,13 @@ bool botHunt({required int maxFrames, void Function()? onDeath, void Function(St
     final tc = Legends.centerOf(target);
     final d = tc - me;
     final isMonster = target.tags.contains('monster');
+    final swinging = ((hero.field('_swing') as num?) ?? 0) > 0;
     // Line up on one axis, then swing when close
     final aligned = d.x.abs() < 14 || d.y.abs() < 14;
     final close = d.length < (target.tags.contains('boss') ? 48 : 36);
     if (isMonster && close && aligned) {
       final face = d.x.abs() > d.y.abs() ? Vector2(d.x.sign, 0) : Vector2(0, d.y.sign);
-      botFrame(face * 0.5, attack: !hero.isSwinging);
+      botFrame(face * 0.5, attack: !swinging);
     } else {
       var dir = botSteer(tc);
       if (isMonster && close) {
@@ -497,5 +528,5 @@ bool botHunt({required int maxFrames, void Function()? onDeath, void Function(St
     lastPos = me.clone();
   }
   botRelease();
-  return LegendsSession.bossDefeated;
+  return _bossDefeated;
 }

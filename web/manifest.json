@@ -1,11 +1,11 @@
 {
-    "name": "ember_engine",
-    "short_name": "ember_engine",
+    "name": "Ember Engine",
+    "short_name": "Ember",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#140C09",
+    "theme_color": "#EA580C",
+    "description": "Made with Ember Engine",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

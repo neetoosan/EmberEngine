@@ -16,6 +16,8 @@ class EditorShortcutsWrapper extends StatelessWidget {
 
   /// 0 = Scene workspace, 1 = Script workspace.
   final void Function(int workspace)? onSwitchWorkspace;
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
 
   const EditorShortcutsWrapper({
     super.key,
@@ -28,6 +30,8 @@ class EditorShortcutsWrapper extends StatelessWidget {
     required this.onToggleZenMode,
     this.onSave,
     this.onSwitchWorkspace,
+    this.onUndo,
+    this.onRedo,
   });
 
   /// True while the keyboard focus is in an editable text field.
@@ -64,6 +68,20 @@ class EditorShortcutsWrapper extends StatelessWidget {
 
     // While the game runs, plain keys belong to gameplay (read through Input).
     if (isRunning && !isCtrlOrCmd) return KeyEventResult.ignored;
+
+    // Ctrl/Cmd + Z / Y / Shift+Z -> Undo / Redo scene edits
+    // (in a text field these keys belong to the field's own undo)
+    if (isCtrlOrCmd && !isTypingInTextField) {
+      final shift = HardwareKeyboard.instance.isShiftPressed;
+      if (key == LogicalKeyboardKey.keyZ && !shift) {
+        onUndo?.call();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyY || (key == LogicalKeyboardKey.keyZ && shift)) {
+        onRedo?.call();
+        return KeyEventResult.handled;
+      }
+    }
 
     // Ctrl/Cmd + 1 / 2 -> Scene / Script workspace
     if (isCtrlOrCmd && onSwitchWorkspace != null) {

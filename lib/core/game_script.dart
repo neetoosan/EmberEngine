@@ -51,6 +51,14 @@ abstract class GameScript {
   /// Two solid hitboxes stopped touching.
   void onCollisionExit(EmberEntity other) {}
 
+  /// This entity's Rigid Body 2D struck [other] (or was struck) at [speed]
+  /// px/s or more (the body's Hit Speed). [impulse] is how hard, in kg·px/s:
+  /// roughly mass × speed — use it for damage.
+  void onHit(EmberEntity other, double impulse, double speed) {}
+
+  /// A Joint 2D on this entity snapped (its Break Force was exceeded).
+  void onJointBreak(EmberComponent joint) {}
+
   /// This character (Character Controller 2D) hit [tile] with its head while
   /// jumping — e.g. to break a brick or open a "?" block.
   void onHeadBump(TileHit tile) {}
@@ -98,9 +106,16 @@ class ScriptRegistry {
   static GameScript? Function(String name)? fallback;
   static List<String> Function()? extraScripts;
 
-  static void register(String scriptName, ScriptFactory factory) {
+  static final Set<String> _hidden = {};
+
+  /// [hidden] scripts still run (older projects use them) but are not offered in lists.
+  static void register(String scriptName, ScriptFactory factory, {bool hidden = false}) {
     _registry[scriptName] = factory;
+    if (hidden) _hidden.add(scriptName);
   }
+
+  /// True for scripts compiled into the engine (including hidden ones).
+  static bool isBuiltIn(String scriptName) => _registry.containsKey(scriptName);
 
   static GameScript? instantiate(String scriptName) {
     final factory = _registry[scriptName];
@@ -109,9 +124,9 @@ class ScriptRegistry {
   }
 
   /// Compiled (built into the engine) script names.
-  static List<String> get builtInScripts => _registry.keys.toList();
+  static List<String> get builtInScripts => _registry.keys.where((k) => !_hidden.contains(k)).toList();
 
-  static List<String> get availableScripts => [...?extraScripts?.call(), ..._registry.keys];
+  static List<String> get availableScripts => [...?extraScripts?.call(), ...builtInScripts];
 }
 
 /// Component that attaches and runs a [GameScript] on an entity.

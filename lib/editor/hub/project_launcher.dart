@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../panels/about_panel.dart';
 import '../theme/ember_theme.dart';
 import 'project_manifest.dart';
 import 'project_storage.dart';
@@ -46,6 +48,10 @@ class _ProjectLauncherScreenState extends State<ProjectLauncherScreen> {
       SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
     );
   }
+
+  /// A recent project whose folder no longer exists (desktop only).
+  static bool _isMissing(RecentProjectInfo item) =>
+      ProjectStorage.isSupported && item.path.isNotEmpty && !Directory(item.path).existsSync();
 
   Future<void> _openFromDisk(String path) async {
     try {
@@ -234,7 +240,7 @@ class _ProjectLauncherScreenState extends State<ProjectLauncherScreen> {
           _buildNavItem(0, 'Project Templates', Icons.dashboard_customize_rounded),
           _buildNavItem(1, 'Recent Projects', Icons.history_rounded),
           _buildNavItem(2, 'Open & Import', Icons.folder_open_rounded),
-          _buildNavItem(3, 'Engine Info', Icons.info_outline_rounded),
+          _buildNavItem(3, 'About', Icons.info_outline_rounded),
 
           const Spacer(),
 
@@ -616,6 +622,10 @@ class _ProjectLauncherScreenState extends State<ProjectLauncherScreen> {
               children: [
                 const SizedBox(height: 4),
                 Text(item.path, style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 11)),
+                if (_isMissing(item)) ...[
+                  const SizedBox(height: 2),
+                  const Text('Folder not found: it was moved, renamed or deleted.', style: TextStyle(color: Colors.amberAccent, fontSize: 10)),
+                ],
                 if (item.previewSnippet != null) ...[
                   const SizedBox(height: 2),
                   Text(item.previewSnippet!, style: const TextStyle(color: Colors.white38, fontSize: 10)),
@@ -655,8 +665,10 @@ class _ProjectLauncherScreenState extends State<ProjectLauncherScreen> {
                     side: const BorderSide(color: EmberTheme.borderMuted),
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   ),
-                  onPressed: () => _openFromDisk(item.path),
-                  child: const Text('Open Project', style: TextStyle(fontSize: 11)),
+                  onPressed: _isMissing(item)
+                      ? () => setState(() => RecentProjectsManager.instance.removeRecent(item.id))
+                      : () => _openFromDisk(item.path),
+                  child: Text(_isMissing(item) ? 'Remove from list' : 'Open Project', style: const TextStyle(fontSize: 11)),
                 ),
               ],
             ),
@@ -756,7 +768,7 @@ class _ProjectLauncherScreenState extends State<ProjectLauncherScreen> {
   }
 
   Widget _buildAboutView() {
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(32),
       child: Container(
         padding: const EdgeInsets.all(24),
@@ -765,56 +777,7 @@ class _ProjectLauncherScreenState extends State<ProjectLauncherScreen> {
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: EmberTheme.borderMuted),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(Icons.local_fire_department_rounded, color: EmberTheme.emberOrange, size: 28),
-                SizedBox(width: 12),
-                Text('Ember Game Engine', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                Spacer(),
-                Chip(
-                  backgroundColor: EmberTheme.canvasBg,
-                  label: Text('Pure Flutter & Dart Engine', style: TextStyle(color: Colors.white70, fontSize: 10)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'A modern, lightweight 2D/3D Game Engine and integrated authoring workstation built on Flutter. '
-              'Features unified Entity-Component-System (ECS) architecture, Flame 2D tilemaps, 3D viewport with '
-              'procedural primitives and lighting, spatial audio, dual particle emitters, interactive gizmos, '
-              'and in-engine visual scripting.',
-              style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.5),
-            ),
-            const SizedBox(height: 20),
-            const Divider(color: EmberTheme.borderMuted),
-            const SizedBox(height: 16),
-            const Text('Subsystems Status:', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            _buildStatusItem('ECS Core Engine', 'Active (Entity, Component, SceneSerializer, EventBus, InputManager)'),
-            _buildStatusItem('2D Viewport & Physics', 'Active (FlameSprite, TileMap, Hitbox, CharacterController2D)'),
-            _buildStatusItem('3D Viewport & Physics', 'Active (MeshRenderer3D, Camera3D, Lighting, CharacterController3D)'),
-            _buildStatusItem('VFX & Particles', 'Active (ParticleEmitter2D & ParticleEmitter3D with GPU presets)'),
-            _buildStatusItem('Audio Subsystem', 'Active (Procedural SFX Synthesizer & Spatial AudioSource)'),
-            _buildStatusItem('Scripting & Compiler', 'Active (GameScript, Visual Code Bridge & Ember Doctor)'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusItem(String title, String desc) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 16),
-          const SizedBox(width: 8),
-          Text('$title: ', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-          Expanded(child: Text(desc, style: const TextStyle(color: Colors.white60, fontSize: 11))),
-        ],
+        child: const AboutEmberContent(),
       ),
     );
   }

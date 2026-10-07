@@ -3,6 +3,7 @@
 library;
 
 import 'package:flutter/foundation.dart';
+import '../core/component.dart';
 import '../core/engine_loop.dart';
 import '../core/entity.dart';
 import '../core/event_bus.dart' show LogSeverity;
@@ -54,6 +55,10 @@ class EmberScripts extends ChangeNotifier {
 
   /// Seconds in the last onUpdate / onFixedUpdate.
   double dt = 1 / 60;
+
+  /// `Game.data`: shared by all scripts and kept across level changes and
+  /// restarts (lives, score, inventory). Emptied when Play starts.
+  final Map<Object?, Object?> gameData = {};
 
   List<String> get names => _sources.keys.toList()..sort();
   String? source(String file) => _sources[file];
@@ -125,6 +130,7 @@ class EmberScripts extends ChangeNotifier {
     _live.clear();
     _runtimeErrors.clear();
     output.clear();
+    gameData.clear();
     current = null;
     notifyListeners();
   }
@@ -314,6 +320,10 @@ class EmberScriptBehavior extends GameScript implements ConfigurableScript {
   void onCollisionEnter(EmberEntity other) => _call('onCollisionEnter', [other]);
   @override
   void onCollisionExit(EmberEntity other) => _call('onCollisionExit', [other]);
+  @override
+  void onHit(EmberEntity other, double impulse, double speed) => _call('onHit', [other, impulse, speed]);
+  @override
+  void onJointBreak(EmberComponent joint) => _call('onJointBreak', [joint]);
   @override
   void onHeadBump(TileHit tile) => _call('onHeadBump', [tile]);
   @override

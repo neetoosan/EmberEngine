@@ -9,9 +9,11 @@ import '../../core/scene.dart';
 import '../../core/transform2d.dart';
 import '../../core/assets.dart';
 import '../particles/particle_system.dart';
+import '../physics/rigid_body2d.dart';
 import '../ui/ui_widgets.dart';
 import 'camera2d.dart';
 import 'flame_components.dart';
+import 'line2d.dart';
 import 'parallax.dart';
 
 /// Flame game implementation for Ember Engine's 2D subsystem.
@@ -77,7 +79,8 @@ class EmberFlameGame extends FlameGame {
       canvas.translate(-view.center.x, -view.center.y);
       _drawEntities(canvas, false);
       canvas.restore();
-      _paintUi(canvas, view.viewport, view.zoom, scene);
+      // UI stays the same size whatever the camera zoom
+      _paintUi(canvas, view.viewport, camera.designWidth > 0 ? view.viewport.width / camera.designWidth : 1.0, scene);
       return;
     }
     _gameView = null;
@@ -109,9 +112,10 @@ class EmberFlameGame extends FlameGame {
     // UI text previews inside the camera frame (or the whole view without a camera)
     if (camera != null && camera.designWidth > 0 && camera.designHeight > 0) {
       final c = camera.position;
-      final tl = worldToScreen(vm.Vector2(c.x - camera.designWidth / 2, c.y - camera.designHeight / 2));
-      final br = worldToScreen(vm.Vector2(c.x + camera.designWidth / 2, c.y + camera.designHeight / 2));
-      _paintUi(canvas, Rect.fromPoints(tl, br), zoom, scene);
+      final tl = worldToScreen(vm.Vector2(c.x - camera.viewWidth / 2, c.y - camera.viewHeight / 2));
+      final br = worldToScreen(vm.Vector2(c.x + camera.viewWidth / 2, c.y + camera.viewHeight / 2));
+      // UI is laid out in design pixels, which the camera's zoom stretches over the frame
+      _paintUi(canvas, Rect.fromPoints(tl, br), (br.dx - tl.dx) / camera.designWidth, scene);
     } else {
       _paintUi(canvas, Offset.zero & screen, 1.0, scene);
     }
@@ -121,7 +125,7 @@ class EmberFlameGame extends FlameGame {
   void _drawCameraFrame(Canvas canvas, Camera2DComponent camera) {
     if (camera.designWidth <= 0 || camera.designHeight <= 0) return;
     final c = camera.position;
-    final rect = Rect.fromCenter(center: Offset(c.x, c.y), width: camera.designWidth, height: camera.designHeight);
+    final rect = Rect.fromCenter(center: Offset(c.x, c.y), width: camera.viewWidth, height: camera.viewHeight);
     canvas.drawRect(rect, Paint()..color = camera.backgroundColor.withValues(alpha: 0.35));
     canvas.drawRect(
       rect,
@@ -219,7 +223,7 @@ class EmberFlameGame extends FlameGame {
       if (tilemap == null && !repeat) {
         final ext = 2 * (size.x * scale.x.abs() + size.y * scale.y.abs()) + 1;
         if (!worldClip.overlaps(Rect.fromLTRB(pos.x - ext, pos.y - ext, pos.x + ext, pos.y + ext))) {
-          _drawParticlesOf(canvas, entity);
+          _drawWorldSpaceOf(canvas, entity);
           continue;
         }
       }
@@ -261,21 +265,50 @@ class EmberFlameGame extends FlameGame {
           if (hitbox != null && hitbox.debugDraw) {
             _renderHitbox(canvas, hitbox, size);
           }
+          final body = entity.getComponent<RigidBody2DComponent>();
+          if (body != null && body.enabled) _renderBodyOutline(canvas, body, t2d);
         }
 
         canvas.restore();
       }
 
-      _drawParticlesOf(canvas, entity);
+      _drawWorldSpaceOf(canvas, entity);
     }
   }
 
-  /// 2D particles are simulated in world space, so they are drawn outside the
-  /// entity's local transform.
-  void _drawParticlesOf(Canvas canvas, EmberEntity entity) {
+  /// 2D particles and lines live in world space, so they are drawn outside
+  /// the entity's local transform.
+  void _drawWorldSpaceOf(Canvas canvas, EmberEntity entity) {
     final emitter = entity.getComponent<ParticleEmitter2DComponent>();
     if (emitter != null && emitter.enabled) {
       _renderParticles2D(canvas, emitter);
+    }
+    final line = entity.getComponent<Line2DComponent>();
+    if (line != null && line.enabled) line.paint(canvas);
+  }
+
+  /// Rigid body collider (editor): orange dynamic, grey static, blue kinematic, dashed-looking thin for sensors.
+  void _renderBodyOutline(Canvas canvas, RigidBody2DComponent body, Transform2DComponent t) {
+    final color = switch (body.bodyType) {
+      RigidBodyType2D.dynamic => const Color(0xFFF97316),
+      RigidBodyType2D.static => const Color(0xFF94A3B8),
+      RigidBodyType2D.kinematic => const Color(0xFF38BDF8),
+    };
+    final paint = Paint()
+      ..color = body.sensor ? color.withValues(alpha: 0.6) : color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = (body.sensor ? 1.0 : 1.5) / zoom;
+    // In the entity's local (unscaled) space: the collider is centred on the box
+    final dims = body.colliderDims(t);
+    final s = t.worldScale;
+    final w = s.x == 0 ? 0.0 : dims.x / s.x.abs(), h = s.y == 0 ? 0.0 : dims.y / s.y.abs();
+    final center = Offset(t.size.x / 2, t.size.y / 2);
+    if (body.shape == BodyShape2D.circle) {
+      final r = (w < h ? w : h) / 2;
+      canvas.drawCircle(center, r, paint);
+      canvas.drawLine(center, center + Offset(r, 0), paint); // shows the rotation
+    } else {
+      canvas.drawRect(Rect.fromCenter(center: center, width: w, height: h), paint);
     }
   }
 

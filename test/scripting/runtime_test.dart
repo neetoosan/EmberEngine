@@ -198,6 +198,14 @@ void main() {
     expect(engine.logs.any((l) => l.message.contains('bad.ember has an error')), isTrue);
   });
 
+  test('retired compiled template scripts still run old projects but are not offered anymore', () {
+    for (final name in ['Quest Hero', 'Flappy Bird', 'Legends Hero']) {
+      expect(ScriptRegistry.instantiate(name), isNotNull, reason: '$name keeps older projects working');
+      expect(ScriptRegistry.availableScripts, isNot(contains(name)));
+    }
+    expect(ScriptRegistry.availableScripts, contains('Patrol Walker'), reason: 'general building blocks stay listed');
+  });
+
   test('hot reload: editing a running script swaps the code and keeps its variables', () {
     scripts.loadAll({'counter.ember': 'var count = 0;\nvoid onUpdate(dt) { count += 1; }'});
     final e = box('C', Vector2.zero(), script: 'counter.ember');

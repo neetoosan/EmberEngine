@@ -6,6 +6,7 @@ import 'input.dart';
 import 'transform2d.dart';
 import 'transform3d.dart';
 import '../subsystems/audio/audio_system.dart';
+import '../subsystems/combat/combat.dart';
 import '../subsystems/particles/particle_system.dart';
 import '../subsystems/physics/character_controller2d.dart';
 import '../subsystems/physics/character_controller3d.dart';
@@ -117,6 +118,15 @@ class FPSPlayerController extends GameScript {
       final particleEmitter = hit.entity.getComponent<ParticleEmitter3DComponent>();
       if (particleEmitter != null) {
         particleEmitter.burst(20, hit.point);
+      }
+
+      // Tell the target: its Health takes the hit, or its scripts get onDamaged(1, shooter)
+      final shooter = entity;
+      final health = hit.entity.getComponent<HealthComponent>();
+      if (health != null) {
+        health.damage(1, source: shooter);
+      } else if (shooter != null) {
+        hit.entity.notifyScripts((s) => s.onDamaged(1, shooter));
       }
     }
   }

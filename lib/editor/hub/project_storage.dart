@@ -27,8 +27,13 @@ class ProjectStorage {
   static bool hasDiskLocation(EmberProject project) =>
       isSupported && File(project.path).isAbsolute && Directory(project.path).existsSync();
 
+  /// Replaces `<Documents>/EmberProjects` (tests point this at a temporary folder).
+  static Directory? projectsRootOverride;
+
   /// `<Documents>/EmberProjects`, created on first use.
   static Future<Directory> defaultProjectsRoot() async {
+    final override = projectsRootOverride;
+    if (override != null) return override.create(recursive: true);
     final docs = await getApplicationDocumentsDirectory();
     final dir = Directory(_join(docs.path, 'EmberProjects'));
     await dir.create(recursive: true);

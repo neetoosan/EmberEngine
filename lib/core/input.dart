@@ -49,6 +49,7 @@ class Input {
 
   static bool isMouseButtonPressed(int button) => InputManager._singleton.isMouseButtonPressed(button);
   static bool isMouseButtonJustPressed(int button) => InputManager._singleton.isMouseButtonJustPressed(button);
+  static bool isMouseButtonJustReleased(int button) => InputManager._singleton.isMouseButtonJustReleased(button);
 
   static void endFrame() => InputManager._singleton.endFrame();
   static void reset() => InputManager._singleton.reset();
@@ -71,6 +72,7 @@ class InputManager {
   vm.Vector2 _mouseDelta = vm.Vector2.zero();
   final Set<int> _mouseButtons = {};
   final Set<int> _justPressedMouseButtons = {};
+  final Set<int> _justReleasedMouseButtons = {};
   bool isPointerLocked = false;
 
   /// Pointer position in 2D world coordinates (set by the 2D viewport while playing).
@@ -172,7 +174,7 @@ class InputManager {
   }
 
   void onMouseUp(int button) {
-    _mouseButtons.remove(button);
+    if (_mouseButtons.remove(button)) _justReleasedMouseButtons.add(button);
   }
 
   // --- Virtual Mobile Touch Dispatchers ---
@@ -315,11 +317,15 @@ class InputManager {
   /// Checks if a mouse button was just pressed this frame.
   bool isMouseButtonJustPressed(int button) => _justPressedMouseButtons.contains(button);
 
+  /// Checks if a mouse button (or touch) was released this frame.
+  bool isMouseButtonJustReleased(int button) => _justReleasedMouseButtons.contains(button);
+
   /// Flushes frame-specific triggers at end of tick.
   void endFrame() {
     _justPressedKeys.clear();
     _justReleasedKeys.clear();
     _justPressedMouseButtons.clear();
+    _justReleasedMouseButtons.clear();
     _virtualJustPressedActions.clear();
     _virtualJustReleasedActions.clear();
     _mouseDelta = vm.Vector2.zero();
@@ -332,6 +338,7 @@ class InputManager {
     _justReleasedKeys.clear();
     _mouseButtons.clear();
     _justPressedMouseButtons.clear();
+    _justReleasedMouseButtons.clear();
     _virtualActions.clear();
     _virtualJustPressedActions.clear();
     _virtualJustReleasedActions.clear();

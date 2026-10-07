@@ -24,8 +24,12 @@ import '../subsystems/audio/audio_system.dart';
 import '../subsystems/combat/combat.dart';
 import '../subsystems/particles/particle_system.dart';
 import '../subsystems/physics/character_controller2d.dart';
+import '../subsystems/physics/rigid_body2d.dart';
+import '../subsystems/physics/tile_collision.dart';
+import '../subsystems/two_d/camera2d.dart';
 import '../subsystems/two_d/door.dart';
 import '../subsystems/two_d/flame_components.dart';
+import '../subsystems/two_d/line2d.dart';
 import '../subsystems/two_d/sprite_animator.dart';
 import '../subsystems/two_d/top_down_controller.dart';
 import '../subsystems/ui/dialogue.dart';
@@ -199,6 +203,11 @@ const _componentAliases = {
   'camera': 'camera2d',
   'animator': 'spriteanimator',
   'transform': 'transform2d',
+  'rigidbody': 'rigidbody2d',
+  'rb': 'rigidbody2d',
+  'physics': 'rigidbody2d',
+  'joint': 'joint2d',
+  'line': 'line2d',
 };
 
 // Keyboard names: 'A', 'Space', 'Left', 'Enter', 'Shift', 'Escape', ...
@@ -409,6 +418,11 @@ class _EntityHost extends HostType {
         });
       case 'clone':
         return _fn(name, (a) => spawnCopy(e, a.isEmpty ? null : _point(a, 0, 'position')));
+      case 'interact':
+        return _fn(name, (a) {
+          final s = e.scene;
+          return s == null ? null : Interaction.interact(s, e, range: optArg<num>(a, 0, 'range', 24).toDouble());
+        });
       default:
         // Shortcut to a component: self.health, self.sprite, self.mover, ...
         final c = findComponent(e, name);
@@ -558,15 +572,68 @@ class _ComponentHost extends HostType {
           }
           return null;
         }), null),
-    'velocity': ((c) => c is TopDownController2DComponent || c is CharacterController2DComponent,
-        (c, _) => c is TopDownController2DComponent ? c.velocity.clone() : (c as CharacterController2DComponent).velocity.clone(),
+    'velocity': ((c) => c is TopDownController2DComponent || c is CharacterController2DComponent || c is RigidBody2DComponent,
+        (c, _) => switch (c) {
+              TopDownController2DComponent() => c.velocity.clone(),
+              RigidBody2DComponent() => c.velocity,
+              _ => (c as CharacterController2DComponent).velocity.clone(),
+            },
         (c, v) {
           final vv = _vec(v, 'velocity');
           if (c is TopDownController2DComponent) c.velocity.setFrom(vv);
           if (c is CharacterController2DComponent) c.velocity.setFrom(vv);
+          if (c is RigidBody2DComponent) c.velocity = vv;
         }),
+    // Rigid Body 2D
+    'angularVelocity': ((c) => c is RigidBody2DComponent, (c, _) => (c as RigidBody2DComponent).angularVelocity,
+        (c, v) => (c as RigidBody2DComponent).angularVelocity = (v as num).toDouble()),
+    'speed': ((c) => c is RigidBody2DComponent, (c, _) => (c as RigidBody2DComponent).velocity.length, null),
+    'mass': ((c) => c is RigidBody2DComponent, (c, _) => (c as RigidBody2DComponent).mass, null),
+    'sleeping': ((c) => c is RigidBody2DComponent, (c, _) => (c as RigidBody2DComponent).sleeping, null),
+    'applyImpulse': ((c) => c is RigidBody2DComponent, (c, n) => _fn(n, (a) {
+          (c as RigidBody2DComponent).applyImpulse(_vec(a.isEmpty ? null : a[0], 'impulse'), a.length > 1 ? _vec(a[1], 'point') : null);
+          return null;
+        }), null),
+    'applyForce': ((c) => c is RigidBody2DComponent, (c, n) => _fn(n, (a) {
+          (c as RigidBody2DComponent).applyForce(_vec(a.isEmpty ? null : a[0], 'force'), a.length > 1 ? _vec(a[1], 'point') : null);
+          return null;
+        }), null),
+    'applyTorque': ((c) => c is RigidBody2DComponent, (c, n) => _fn(n, (a) {
+          (c as RigidBody2DComponent).applyTorque(_num(a, 0, 'torque'));
+          return null;
+        }), null),
+    'wake': ((c) => c is RigidBody2DComponent, (c, n) => _fn(n, (_) {
+          (c as RigidBody2DComponent).wake();
+          return null;
+        }), null),
+    // Joint 2D
+    'broken': ((c) => c is PhysicsJoint2DComponent, (c, _) => (c as PhysicsJoint2DComponent).broken, null),
+    'force': ((c) => c is PhysicsJoint2DComponent, (c, _) => (c as PhysicsJoint2DComponent).force, null),
+    'snap': ((c) => c is PhysicsJoint2DComponent, (c, n) => _fn(n, (_) {
+          (c as PhysicsJoint2DComponent).broken = true;
+          return null;
+        }), null),
+    // Line 2D
+    'points': ((c) => c is Line2DComponent, (c, _) => [for (final p in (c as Line2DComponent).points) p.clone()], (c, v) {
+          if (v is! List) throw ScriptArgumentError('points should be a list of vec(x, y)');
+          (c as Line2DComponent).points = [for (final p in v) _vec(p, 'point')];
+        }),
+    'clear': ((c) => c is Line2DComponent, (c, n) => _fn(n, (_) {
+          (c as Line2DComponent).points = [];
+          return null;
+        }), null),
+    // Camera 2D
+    'shake': ((c) => c is Camera2DComponent, (c, n) => _fn(n, (a) {
+          (c as Camera2DComponent).shake(optArg<num>(a, 0, 'amount', 8).toDouble(), optArg<num>(a, 1, 'seconds', 0.3).toDouble());
+          return null;
+        }), null),
     'facing': ((c) => c is TopDownController2DComponent || c is CharacterController2DComponent,
-        (c, _) => c is TopDownController2DComponent ? c.facing.name : ((c as CharacterController2DComponent).facing < 0 ? 'left' : 'right'), null),
+        (c, _) => c is TopDownController2DComponent ? c.facing.name : ((c as CharacterController2DComponent).facing < 0 ? 'left' : 'right'),
+        (c, v) {
+          if (c is! TopDownController2DComponent) throw ScriptArgumentError('facing can only be set on a Top-Down Controller');
+          c.facing = Facing.values.firstWhere((f) => f.name == '$v',
+              orElse: () => throw ScriptArgumentError('facing is "up", "down", "left" or "right", not ${Interpreter.describe(v)}'));
+        }),
     'moving': ((c) => c is TopDownController2DComponent, (c, _) => (c as TopDownController2DComponent).isMoving, null),
     'hitWall': ((c) => c is TopDownController2DComponent || c is CharacterController2DComponent,
         (c, _) => c is TopDownController2DComponent ? c.hitWall : (c as CharacterController2DComponent).hitWall, null),
@@ -583,8 +650,13 @@ class _ComponentHost extends HostType {
           return null;
         }), null),
     // Effects & sound
-    'burst': ((c) => c is ParticleEmitter2DComponent, (c, n) => _fn(n, (a) {
-          (c as ParticleEmitter2DComponent).burst(optArg<num>(a, 0, 'count', 20).round());
+    'burst': ((c) => c is ParticleEmitter2DComponent || c is ParticleEmitter3DComponent, (c, n) => _fn(n, (a) {
+          final count = optArg<num>(a, 0, 'count', 20).round();
+          if (c is ParticleEmitter3DComponent) {
+            c.burst(count);
+          } else {
+            (c as ParticleEmitter2DComponent).burst(count, a.length > 1 ? _vec(a[1], 'position') : null);
+          }
           return null;
         }), null),
     'playSound': ((c) => c is AudioSourceComponent, (c, n) => _fn(n, (_) {
@@ -604,6 +676,21 @@ class _ComponentHost extends HostType {
     'filled': ((c) => c is UIImageComponent, (c, _) => (c as UIImageComponent).filled, (c, v) => (c as UIImageComponent).filled = (v as num).round()),
     // Monster AI
     'state': ((c) => c is MonsterAIComponent, (c, _) => (c as MonsterAIComponent).state.name, null),
+    'shoot': ((c) => c is MonsterAIComponent, (c, n) => _fn(n, (a) {
+          final ai = c as MonsterAIComponent;
+          final e = ai.entity;
+          final s = e?.scene;
+          if (e == null || s == null) return null;
+          final dir = _point(a, 0, 'direction');
+          if (dir.length2 == 0) throw ScriptArgumentError('direction must not be vec(0, 0)');
+          final team = e.getComponent<HealthComponent>()?.team ?? 'monster';
+          return ai.spawnProjectile(s, e, _center(e), dir.normalized(), team);
+        }), null),
+    // Platformer probes (e.g. turn around at ledges)
+    'groundAt': ((c) => c is CharacterController2DComponent,
+        (c, n) => _fn(n, (a) => (c as CharacterController2DComponent).hasGroundAt(_num(a, 0, 'x'), _num(a, 1, 'y'))), null),
+    'hazardAt': ((c) => c is CharacterController2DComponent,
+        (c, n) => _fn(n, (a) => (c as CharacterController2DComponent).hasHazardAt(_num(a, 0, 'x'), _num(a, 1, 'y'))), null),
     // Transform
     'position': ((c) => c is Transform2DComponent, (c, _) => (c as Transform2DComponent).position.clone(),
         (c, v) => (c as Transform2DComponent).position = _vec(v, 'position')),
@@ -672,6 +759,10 @@ class _TileHitHost extends HostType {
       'kind' => t.kind.name,
       'x' => t.rect.center.dx,
       'y' => t.rect.center.dy,
+      'left' => t.rect.left,
+      'top' => t.rect.top,
+      'right' => t.rect.right,
+      'bottom' => t.rect.bottom,
       'set' => _fn(name, (a) {
           t.setTile(arg<int>(a, 0, 'tile id'));
           return null;
@@ -703,8 +794,66 @@ class _InputHost extends HostType {
         'mouse' => InputManager.instance.mouseWorldPosition.clone(),
         'click' => Input.isMouseButtonJustPressed(0),
         'mouseDown' => Input.isMouseButtonPressed(0),
+        'mouseReleased' => Input.isMouseButtonJustReleased(0),
         _ => missing,
       };
+}
+
+/// `Physics.gravity`, `Physics.raycast(a, b)`, `Physics.explode(...)`.
+class PhysicsApi {
+  const PhysicsApi();
+}
+
+class _PhysicsHost extends HostType {
+  @override
+  String get typeName => 'Physics';
+  @override
+  bool matches(Object v) => v is PhysicsApi;
+
+  RigidWorld2D get _world => RigidWorld2D.obtain(_scene);
+
+  @override
+  Object? getMember(Object obj, String name) => switch (name) {
+        'gravity' => _world.gravity,
+        'settled' => _world.settled,
+        'moving' => _world.awakeCount,
+        'raycast' => _fn(name, (a) => _world.raycast(_vec(a.isEmpty ? null : a[0], 'from'), _vec(a.length > 1 ? a[1] : null, 'to'))),
+        'entitiesAt' => _fn(name, (a) => _world.entitiesAt(_point(a, 0, 'point'))),
+        'explode' => _fn(name, (a) {
+            final at = _point(a, 0, 'center');
+            final i = a.isNotEmpty && a[0] is num ? 2 : 1;
+            final pushed = _world.explode(at, optArg<num>(a, i, 'radius', 120).toDouble(), optArg<num>(a, i + 1, 'strength', 800).toDouble());
+            return [for (final (e, _) in pushed) e];
+          }),
+        _ => missing,
+      };
+
+  @override
+  bool setMember(Object obj, String name, Object? value) {
+    if (name != 'gravity') return false;
+    _world.gravity = _vec(value, 'gravity');
+    return true;
+  }
+}
+
+class _RayHitHost extends HostType {
+  @override
+  String get typeName => 'RayHit';
+  @override
+  bool matches(Object v) => v is RayHit2D;
+  @override
+  String describe(Object obj) => 'RayHit(${(obj as RayHit2D).entity.name})';
+  @override
+  Object? getMember(Object obj, String name) {
+    final h = obj as RayHit2D;
+    return switch (name) {
+      'entity' => h.entity,
+      'point' => h.point.clone(),
+      'normal' => h.normal.clone(),
+      'fraction' => h.fraction,
+      _ => missing,
+    };
+  }
 }
 
 /// `Game.timeScale`, `Game.level`, ...
@@ -727,6 +876,8 @@ class _GameHost extends HostType {
       'level' => engine.activeScene.name,
       'levels' => engine.levelNames,
       'paused' => engine.timeScale == 0,
+      'data' => _lib.gameData,
+      'dialogueOpen' => DialogueSystem.instance.isOpen,
       _ => missing,
     };
   }
@@ -752,6 +903,15 @@ class _GameHost extends HostType {
 /// Copies [template] (e.g. a disabled "Bullet" entity used as a prefab) into the scene.
 EmberEntity spawnCopy(EmberEntity template, Vector2? at) {
   final copy = template.clone();
+  // Spawned copies keep the template's names (scripts compare other.name), unlike Ctrl+D copies
+  void rename(EmberEntity from, EmberEntity to) {
+    to.name = from.name;
+    for (var i = 0; i < from.children.length && i < to.children.length; i++) {
+      rename(from.children[i], to.children[i]);
+    }
+  }
+
+  rename(template, copy);
   copy.enabled = true;
   final t = copy.getComponent<Transform2DComponent>();
   if (at != null && t != null) t.position = at;
@@ -769,7 +929,9 @@ bool _registered = false;
 void registerScriptApi() {
   if (_registered) return;
   _registered = true;
-  Interpreter.hostTypes.addAll([_Vec2Host(), _EntityHost(), _ScriptVarsHost(), _TileHitHost(), _InputHost(), _GameHost(), _ComponentHost()]);
+  Interpreter.hostTypes.addAll([
+    _Vec2Host(), _EntityHost(), _ScriptVarsHost(), _TileHitHost(), _RayHitHost(), _InputHost(), _GameHost(), _PhysicsHost(), _ComponentHost(),
+  ]);
 
   final g = Interpreter.globals;
   final rng = math.Random();
@@ -786,6 +948,7 @@ void registerScriptApi() {
   g['vec'] = _fn('vec', (a) => Vector2(optArg<num>(a, 0, 'x', 0).toDouble(), optArg<num>(a, 1, 'y', 0).toDouble()));
   g['Input'] = const InputApi();
   g['Game'] = const GameApi();
+  g['Physics'] = const PhysicsApi();
 
   // --- Math
   g['pi'] = math.pi;
@@ -849,6 +1012,11 @@ void registerScriptApi() {
     final e = a.isEmpty || a[0] == null ? _self : _entity(a[0], 'entity');
     if (e != null) e.scene?.destroyLater(e);
     return null;
+  });
+  g['solidAt'] = _fn('solidAt', (a) {
+    final p = _point(a, 0, 'point');
+    final size = optArg<num>(a, a.isNotEmpty && a[0] is num ? 2 : 1, 'size', 4).toDouble();
+    return TileCollision.blocked(_scene, Rect.fromCenter(center: Offset(p.x, p.y), width: size, height: size));
   });
   g['strike'] = _fnN('strike', (a, n) {
     final at = _point(a, 0, 'center');
@@ -976,6 +1144,10 @@ void registerScriptApi() {
     }
     return null;
   });
+  g['deleteValue'] = _fn('deleteValue', (a) {
+    SaveData.instance.remove(arg<String>(a, 0, 'key'));
+    return null;
+  });
   g['loadValue'] = _fn('loadValue', (a) {
     final key = arg<String>(a, 0, 'key');
     final fallback = a.length > 1 ? a[1] : null;
@@ -1007,7 +1179,9 @@ void _registerDocs() {
     ('onDestroy()', 'Runs when the entity is removed.'),
     ('onTriggerEnter(other)', 'This entity\'s hitbox started touching [other] (a non-solid hitbox).'),
     ('onTriggerExit(other)', 'Stopped touching [other].'),
-    ('onCollisionEnter(other)', 'Two solid hitboxes bumped.'),
+    ('onCollisionEnter(other)', 'Two solid hitboxes (or rigid bodies) started touching.'),
+    ('onHit(other, impulse, speed)', 'This Rigid Body 2D struck something (or was struck) at its Hit Speed or faster. impulse ≈ mass × speed: use it for damage.'),
+    ('onJointBreak(joint)', 'A Joint 2D on this entity snapped (its Break Force was exceeded).'),
     ('onDamaged(amount, source)', 'This entity\'s Health lost [amount] (source may be null).'),
     ('onDeath(killer)', 'This entity\'s Health reached 0.'),
     ('onKill(victim)', 'This entity (or its projectile) killed [victim] — award XP here.'),
@@ -1024,6 +1198,7 @@ void _registerDocs() {
     ('vec(x, y)', 'A 2D vector / point, e.g. vec(100, 50). Add, subtract, multiply by numbers.'),
     ('Input', 'Keyboard, mouse and actions — see Input.'),
     ('Game', 'Time, time scale and the current level — see Game.'),
+    ('Physics', 'Gravity, raycasts and explosions for Rigid Body 2D — see Physics.'),
   ]);
   ScriptApi._add('', 'Math', [
     ('random()', 'A random number from 0 to 1.'),
@@ -1051,6 +1226,7 @@ void _registerDocs() {
     ('find(name)', 'The entity with this name, or null.'),
     ('findAll(tag)', 'All enabled entities with this tag.'),
     ('findNearest(tag)', 'The closest entity with this tag (optionally findNearest(tag, from)).'),
+    ('solidAt(point)', 'true if a solid tile covers this point (walls, water, trees). solidAt(x, y, size) checks a square.'),
     ('spawn(template, position)', 'Copies an entity (e.g. a disabled "Bullet" prefab) to a position and returns the copy.'),
     ('destroy(entity)', 'Removes an entity at the end of the frame. destroy() removes self.'),
     ('strike(center, width, height, damage: 1)', 'Damages every enemy with Health in the box (named: damage, team, knockback). Returns who was hit.'),
@@ -1072,6 +1248,7 @@ void _registerDocs() {
   ScriptApi._add('', 'Saving', [
     ('saveValue(key, value)', 'Stores a number, text, bool or map between runs (e.g. best score).'),
     ('loadValue(key, default)', 'Reads a saved value, or default if never saved.'),
+    ('deleteValue(key)', 'Forgets a saved value.'),
   ]);
 
   ScriptApi._add('Entity', 'Entity', [
@@ -1098,6 +1275,7 @@ void _registerDocs() {
     ('directionTo(other)', 'Unit Vec2 pointing at another entity or Vec2.'),
     ('moveToward(target, maxDistance)', 'Steps toward a point; returns true when arrived.'),
     ('overlaps(other)', 'true if the hitboxes touch.'),
+    ('interact(range)', 'Talks to / uses the nearest entity within range (opens its Dialogue, sends it onInteract). Returns it or null.'),
     ('call(function, args...)', 'Calls a function in this entity\'s Ember Script, e.g. enemy.call("stun", 2).'),
     ('script', 'This entity\'s Ember Script: read or set its variables (enemy.script.speed = 0).'),
     ('clone(position)', 'Copies this entity into the scene.'),
@@ -1110,7 +1288,11 @@ void _registerDocs() {
     ('mover', 'Its Top-Down Controller (move(dir), velocity, facing, knockback(v)).'),
     ('controller', 'Its Platformer Controller (move(x, jumpHeld, jumpPressed), grounded, bounce()).'),
     ('hitbox', 'Its Hitbox 2D.'),
-    ('particles', 'Its Particle Emitter (burst(20)).'),
+    ('particles', 'Its Particle Emitter (burst(20), burst(20, position)).'),
+    ('rigidbody', 'Its Rigid Body 2D (velocity, angularVelocity, applyImpulse(v), mass, sleeping).'),
+    ('joint', 'Its Joint 2D (broken, force, snap()).'),
+    ('line', 'Its Line 2D (points, color, width, clear()).'),
+    ('camera', 'Its Camera 2D (zoom, followTarget, shake(amount, seconds)).'),
     ('text', 'Its UI Text (text).'),
     ('ai', 'Its Monster AI (state, sightRange, …).'),
   ]);
@@ -1123,8 +1305,22 @@ void _registerDocs() {
     ('damage(amount, source, knockback)', 'Health: take damage. Returns true if it hurt.'),
     ('heal(amount)', 'Health: restore health.'),
     ('move(direction)', 'Top-down: walk toward a Vec2 (length ≤ 1). Platformer: move(horizontal, jumpHeld, jumpPressed).'),
-    ('burst(count)', 'Particles: emit a burst.'),
+    ('burst(count, position)', 'Particles: emit a burst (optionally at a world position).'),
+    ('velocity', 'Rigid body / movers: current velocity in px/s (can be set, even right after spawn()).'),
+    ('angularVelocity', 'Rigid body: spin in radians per second.'),
+    ('speed', 'Rigid body: how fast it moves (px/s).'),
+    ('mass', 'Rigid body: weight in kg (a 32×32 box of density 1 is 1 kg).'),
+    ('sleeping', 'Rigid body: true while resting (not simulated until touched).'),
+    ('applyImpulse(impulse, point)', 'Rigid body: instant push in kg·px/s (at a world point adds spin).'),
+    ('applyForce(force, point)', 'Rigid body: steady push for this physics step (call in onFixedUpdate).'),
+    ('wake()', 'Rigid body: wake it up so it simulates again.'),
+    ('snap()', 'Joint: break it now.'),
+    ('points', 'Line 2D: list of world points to draw through, e.g. [vec(0, 0), vec(100, 40)].'),
+    ('shake(amount, seconds)', 'Camera 2D: screen shake (e.g. find("Camera").camera.shake(10, 0.4)).'),
     ('talk()', 'Dialogue: open this character\'s lines.'),
+    ('shoot(direction)', 'Monster AI: fire its projectile along a Vec2 (e.g. rings of fireballs).'),
+    ('groundAt(x, y)', 'Platformer: is there floor at this point? (turn around at ledges)'),
+    ('hazardAt(x, y)', 'Platformer: is there a hazard tile at this point?'),
   ]);
   ScriptApi._add('Vec2', 'Vec2', [
     ('x', 'Horizontal part.'),
@@ -1150,6 +1346,21 @@ void _registerDocs() {
     ('mouse', 'Mouse position in the world.'),
     ('click', 'true on the frame the mouse (or touch) goes down.'),
     ('mouseDown', 'true while the mouse button is held.'),
+    ('mouseReleased', 'true on the frame the mouse (or touch) is let go — end of a drag.'),
+  ]);
+  ScriptApi._add('Physics', 'Physics', [
+    ('gravity', 'World gravity as a Vec2 in px/s² (can be set, e.g. vec(0, 300) for the moon).'),
+    ('settled', 'true when no rigid body is moving any more.'),
+    ('moving', 'How many rigid bodies are still moving.'),
+    ('raycast(from, to)', 'The first body on the line: a RayHit (entity, point, normal) or null.'),
+    ('entitiesAt(point)', 'Entities whose rigid body covers this point.'),
+    ('explode(center, radius, strength)', 'Pushes every body within radius away (strongest at the centre); returns them.'),
+  ]);
+  ScriptApi._add('RayHit', 'RayHit', [
+    ('entity', 'The entity that was hit.'),
+    ('point', 'Where the ray hit (Vec2).'),
+    ('normal', 'Direction the hit surface faces.'),
+    ('fraction', '0 at the ray start, 1 at its end.'),
   ]);
   ScriptApi._add('Game', 'Game', [
     ('time', 'Seconds since the level started.'),
@@ -1158,12 +1369,15 @@ void _registerDocs() {
     ('paused', 'Set true to freeze game time (menus).'),
     ('level', 'Name of the current scene.'),
     ('levels', 'Names of all scenes.'),
+    ('data', 'A map shared by all scripts that survives level changes and restarts: Game.data["lives"] = 3.'),
+    ('dialogueOpen', 'true while a dialogue box is showing.'),
   ]);
   ScriptApi._add('Tile', 'Tile', [
     ('column', 'Tile column.'),
     ('row', 'Tile row.'),
     ('id', 'Tile id.'),
     ('kind', 'solid, breakable, question, hazard, …'),
+    ('x', 'Centre x of the tile (also y, left, top, right, bottom).'),
     ('set(id)', 'Replaces the tile (0 removes it).'),
   ]);
   ScriptApi._add('Text', 'Text & numbers', [

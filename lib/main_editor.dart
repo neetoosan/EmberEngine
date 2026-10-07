@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'core/crash_reporter.dart';
 import 'core/scene.dart';
 import 'editor/ember_editor_app.dart';
 import 'editor/hub/project_manifest.dart';
@@ -10,6 +11,8 @@ import 'subsystems/audio/audio_output.dart';
 /// Full Workstation Editor entry point for Ember Engine.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // First, so even a failure during start-up is logged instead of crashing
+  await CrashReporter.install(appName: 'editor');
   registerAllSubsystems();
   registerGameScripts();
   AudioOutput.instance.attach();

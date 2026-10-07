@@ -95,8 +95,9 @@ class MeshPrimitives {
         final first = lat * (lonSegments + 1) + lon;
         final second = first + lonSegments + 1;
 
-        triangles.add(Triangle3D(first, second, first + 1));
-        triangles.add(Triangle3D(second, second + 1, first + 1));
+        // Counter-clockwise seen from outside (faces point outward, like the normals)
+        triangles.add(Triangle3D(first, first + 1, second));
+        triangles.add(Triangle3D(second, first + 1, second + 1));
       }
     }
 
@@ -190,8 +191,9 @@ class MeshPrimitives {
       final top2 = top1 + 2;
       final bot2 = top1 + 3;
 
-      triangles.add(Triangle3D(top1, bot1, top2));
-      triangles.add(Triangle3D(top2, bot1, bot2));
+      // Counter-clockwise seen from outside (faces point outward, like the normals)
+      triangles.add(Triangle3D(top1, top2, bot1));
+      triangles.add(Triangle3D(top2, bot2, bot1));
     }
 
     final mesh = Mesh3D(name: 'Cylinder', vertices: vertices, triangles: triangles);

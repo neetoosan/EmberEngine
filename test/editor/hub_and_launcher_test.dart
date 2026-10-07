@@ -9,11 +9,12 @@ import 'package:ember_engine/editor/panels/hierarchy_panel.dart';
 
 void main() {
   group('Ember Startup Hub & Template System Tests', () {
-    test('TemplateCatalog has all 4 official starter templates', () {
+    test('TemplateCatalog has every official starter template', () {
       final templates = TemplateCatalog.templates;
-      expect(templates.length, 7);
+      expect(templates.length, ProjectTemplateType.values.length);
 
       final types = templates.map((t) => t.type).toSet();
+      expect(types, containsAll(ProjectTemplateType.values));
       expect(types, contains(ProjectTemplateType.platformer2d));
       expect(types, contains(ProjectTemplateType.fps3d));
       expect(types, contains(ProjectTemplateType.particles));
@@ -30,12 +31,13 @@ void main() {
       expect(project.scenes.containsKey('MainScene'), isTrue);
 
       final scene = project.activeScene;
-      expect(scene.getEntityByName('World2D'), isNotNull);
-      expect(scene.getEntityByName('HeroPlayer'), isNotNull);
+      expect(scene.getEntityByName('Level'), isNotNull);
+      expect(scene.getEntityByName('Hero'), isNotNull);
       expect(scene.getEntityByName('Coin_1'), isNotNull);
 
-      expect(project.scripts.containsKey('player_controller_2d.dart'), isTrue);
-      expect(project.scripts['player_controller_2d.dart'], contains('class PlayerController2D'));
+      // Gameplay is editable Ember Script (no dead .dart notes)
+      expect(project.scripts.keys, containsAll(['player.ember', 'coin.ember', 'hud.ember']));
+      expect(project.scripts.keys.where((f) => f.endsWith('.dart')), isEmpty);
     });
 
     test('TemplateCatalog generates complete 3D FPS Arena Project', () {
@@ -51,7 +53,8 @@ void main() {
       expect(scene.getEntityByName('TargetBot'), isNotNull);
       expect(scene.getEntityByName('Player (FPS)'), isNotNull);
 
-      expect(project.scripts.containsKey('fps_controller.dart'), isTrue);
+      expect(project.scripts.containsKey('target_bot.ember'), isTrue);
+      expect(project.scripts.keys.where((f) => f.endsWith('.dart')), isEmpty);
     });
 
     test('TemplateCatalog generates Particle Playground and Blank projects', () {
@@ -158,8 +161,8 @@ void main() {
     // 3. Verify transition to Workstation Editor
     expect(find.byType(EditorTopBar), findsOneWidget);
     expect(find.byType(HierarchyPanel), findsOneWidget);
-    expect(find.text('World2D'), findsOneWidget);
-    expect(find.text('HeroPlayer'), findsOneWidget);
+    expect(find.text('Level'), findsOneWidget);
+    expect(find.text('Hero'), findsOneWidget);
 
     // 4. Return to Project Hub via TopBar logo click
     await tester.tap(find.text('EMBER'));

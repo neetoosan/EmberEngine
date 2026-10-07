@@ -13,6 +13,7 @@ import '../subsystems/audio/audio_system.dart';
 import '../subsystems/physics/physics_world2d.dart';
 import '../subsystems/physics/character_controller2d.dart';
 import '../subsystems/physics/physics_world3d.dart';
+import '../subsystems/physics/rigid_body2d.dart';
 import '../subsystems/three_d/camera3d.dart';
 
 /// Performance & Power mode for battery / thermal management.
@@ -136,6 +137,9 @@ class EmberEngine with ChangeNotifier {
     final snapshot = _savedSceneSnapshot;
     return snapshot != null ? EmberScene.fromJson(snapshot) : _activeScene;
   }
+
+  /// JSON of [editableScene] without rebuilding it (cheap while the game runs).
+  Map<String, dynamic> get editableSceneJson => _savedSceneSnapshot ?? _activeScene.toJson();
 
   void loadScene(EmberScene scene) {
     if (identical(scene, _activeScene)) return; // would otherwise destroy the scene being loaded
@@ -309,6 +313,12 @@ class EmberEngine with ChangeNotifier {
   /// Notifies panels now while editing, or at most every [uiRefreshInterval]
   /// seconds while the game runs.
   void _notifyUi() {
+    // A deleted entity (hierarchy ✕, Delete key, undo, a script) is no longer selected
+    final selected = _selectedEntity;
+    if (selected != null && !_activeScene.allEntities.contains(selected)) {
+      _selectedEntity = null;
+      EmberEventBus.instance.emit(SelectionChangedEvent(null));
+    }
     if (_playState == PlayState.stopped) {
       notifyListeners();
     } else {
@@ -329,6 +339,7 @@ class EmberEngine with ChangeNotifier {
       if (_mode == EngineMode.threeD) {
         PhysicsWorld3D.step(_activeScene, fixedTimestep);
       } else {
+        RigidWorld2D.step(_activeScene, fixedTimestep);
         PhysicsWorld2D.step(_activeScene, fixedTimestep);
       }
       _activeScene.fixedUpdate(fixedTimestep);

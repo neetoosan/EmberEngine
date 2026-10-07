@@ -19,8 +19,8 @@ void main() {
     expect(engine.activeScene.name, Legends.title);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    for (var i = 0; i < 5; i++) {
-      await tester.pump(const Duration(milliseconds: 16));
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 16)); // includes the 0.25 s fade
     }
     expect(engine.activeScene.name, Legends.village);
 

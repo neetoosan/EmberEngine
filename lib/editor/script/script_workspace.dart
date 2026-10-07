@@ -7,6 +7,7 @@ import '../../scripting/api.dart';
 import '../../scripting/script_library.dart';
 import '../../scripting/templates.dart';
 import '../hub/project_manifest.dart';
+import '../project_session.dart';
 import '../theme/ember_theme.dart';
 import 'code_editor.dart';
 
@@ -68,6 +69,7 @@ class ScriptWorkspaceState extends State<ScriptWorkspace> {
   void initState() {
     super.initState();
     _lib.addListener(_onLibraryChanged);
+    ProjectSession.instance.addListener(_onSessionChanged);
     ScriptWorkspaceController.instance.addListener(_onOpenRequest);
     _openFirst();
     WidgetsBinding.instance.addPostFrameCallback((_) => _onOpenRequest());
@@ -91,6 +93,7 @@ class ScriptWorkspaceState extends State<ScriptWorkspace> {
   @override
   void dispose() {
     _lib.removeListener(_onLibraryChanged);
+    ProjectSession.instance.removeListener(_onSessionChanged);
     ScriptWorkspaceController.instance.removeListener(_onOpenRequest);
     _checkTimer?.cancel();
     for (final c in _controllers.values) {
@@ -147,6 +150,11 @@ class ScriptWorkspaceState extends State<ScriptWorkspace> {
       _controllers.remove(file)?.dispose();
       if (_active == file) _active = _tabs.isEmpty ? null : _tabs.last;
     });
+  }
+
+  /// Saved from anywhere (Ctrl+S in the scene, the save prompt): no file is unsaved any more.
+  void _onSessionChanged() {
+    if (!ProjectSession.instance.isDirty && _unsaved.isNotEmpty && mounted) setState(_unsaved.clear);
   }
 
   String? _lastSeen;

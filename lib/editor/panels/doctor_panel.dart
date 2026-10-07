@@ -1,49 +1,57 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '../theme/ember_theme.dart';
+import '../doctor.dart';
 import '../hub/project_manifest.dart';
 import '../hub/project_package.dart';
+import '../hub/project_storage.dart';
+import '../project_session.dart';
+import '../theme/ember_theme.dart';
 
-/// Status state for individual diagnostic checks.
-enum HealthStatus {
-  passed('Passed', Colors.greenAccent, Icons.check_circle_rounded),
-  warning('Warning', Colors.amberAccent, Icons.warning_amber_rounded),
-  failed('Failed', Colors.redAccent, Icons.error_outline_rounded),
-  checking('Running...', Colors.blueAccent, Icons.sync_rounded);
+export '../doctor.dart' show DiagnosticReportItem, HealthStatus;
 
-  final String label;
-  final Color color;
-  final IconData icon;
-  const HealthStatus(this.label, this.color, this.icon);
-}
-
-/// Single diagnostic check result item.
-class DiagnosticReportItem {
-  final String title;
-  final String category;
-  HealthStatus status;
-  String details;
-  String? recommendation;
-
-  DiagnosticReportItem({
-    required this.title,
-    required this.category,
-    required this.status,
-    required this.details,
-    this.recommendation,
-  });
-}
-
-/// Ember Doctor & Compiler Dependency Diagnostics Panel / Modal.
+/// Ember Doctor: real checks of the open project and of this machine's
+/// export setup (see [ProjectDoctor]), with buttons that open or fix problems.
 class EmberDoctorDialog extends StatefulWidget {
   final EmberProject? project;
 
-  const EmberDoctorDialog({super.key, this.project});
+  /// The project as it would be saved now (`ProjectSession.contentOf`); defaults to [project] as stored.
+  final Map<String, dynamic> Function()? content;
+  final bool Function()? hasUnsavedChanges;
+  final void Function(String file)? onOpenScript;
+  final Future<void> Function()? onSave;
 
-  static void show(BuildContext context, {EmberProject? project}) {
+  /// Off in tests (they don't look at this machine's Flutter / Android setup).
+  final bool checkExports;
+
+  const EmberDoctorDialog({
+    super.key,
+    this.project,
+    this.content,
+    this.hasUnsavedChanges,
+    this.onOpenScript,
+    this.onSave,
+    this.checkExports = !kIsWeb,
+  });
+
+  static void show(
+    BuildContext context, {
+    EmberProject? project,
+    Map<String, dynamic> Function()? content,
+    bool Function()? hasUnsavedChanges,
+    void Function(String file)? onOpenScript,
+    Future<void> Function()? onSave,
+    bool checkExports = !kIsWeb,
+  }) {
     showDialog(
       context: context,
-      builder: (ctx) => EmberDoctorDialog(project: project),
+      builder: (ctx) => EmberDoctorDialog(
+        project: project,
+        content: content,
+        hasUnsavedChanges: hasUnsavedChanges,
+        onOpenScript: onOpenScript,
+        onSave: onSave,
+        checkExports: checkExports,
+      ),
     );
   }
 
@@ -63,90 +71,45 @@ class _EmberDoctorDialogState extends State<EmberDoctorDialog> {
   }
 
   Future<void> _runDiagnostics() async {
+    final project = widget.project;
     setState(() {
       _isRunningDiagnostics = true;
       _reports.clear();
     });
-
-    await Future.delayed(const Duration(milliseconds: 300));
-
-    final items = <DiagnosticReportItem>[];
-
-    // 1. Flutter & Dart SDK
-    items.add(DiagnosticReportItem(
-      title: 'Dart & Flutter SDK Environment',
-      category: 'SDK & Toolchain',
-      status: HealthStatus.passed,
-      details: 'Flutter 3.x+ / Dart 3.x (Platform: ${defaultTargetPlatform.name}, Web: $kIsWeb)',
-      recommendation: 'SDK runtime is fully compatible with Ember Engine ECS architecture.',
-    ));
-
-    // 2. Project Dependencies (pubspec.yaml)
-    items.add(DiagnosticReportItem(
-      title: 'Core Engine Dependencies',
-      category: 'Dependencies',
-      status: HealthStatus.passed,
-      details: 'All required packages verified: vector_math, flame (2D), flutter (material), audioplayers',
-      recommendation: 'Engine dependency graph is clean and up to date.',
-    ));
-
-    // 3. GPU & Shader Capabilities
-    items.add(DiagnosticReportItem(
-      title: 'GPU & Graphics Hardware Acceleration',
-      category: 'Graphics & VFX',
-      status: HealthStatus.passed,
-      details: 'Hardware-accelerated Skia/Impeller canvas active. 2D/3D procedural shaders ready.',
-      recommendation: 'Optimal rendering performance detected for viewport rendering.',
-    ));
-
-    // 4. Script Compilation & Syntax Check
-    final scriptCount = widget.project?.scripts.length ?? 0;
-    var scriptErrors = 0;
-    if (widget.project != null) {
-      for (final entry in widget.project!.scripts.entries) {
-        final code = entry.value;
-        int openB = 0;
-        for (int i = 0; i < code.length; i++) {
-          if (code[i] == '{') openB++;
-          if (code[i] == '}') openB--;
-        }
-        if (openB != 0) scriptErrors++;
-      }
+    if (project == null) {
+      setState(() {
+        _reports.add(const DiagnosticReportItem(
+            title: 'No project open', category: 'Project', status: HealthStatus.info, details: 'Open a project from the Project Hub to check it.'));
+        _isRunningDiagnostics = false;
+      });
+      return;
     }
-
-    if (scriptErrors == 0) {
-      items.add(DiagnosticReportItem(
-        title: 'Script Compilation & Static Analysis',
-        category: 'Compiler',
-        status: HealthStatus.passed,
-        details: '$scriptCount scripts verified. 0 syntax errors, 0 unresolved component symbols.',
-        recommendation: 'All GameScripts are verified and ready for live execution.',
-      ));
-    } else {
-      items.add(DiagnosticReportItem(
-        title: 'Script Compilation & Static Analysis',
-        category: 'Compiler',
-        status: HealthStatus.warning,
-        details: '$scriptErrors out of $scriptCount scripts have syntax irregularities.',
-        recommendation: 'Open the Script Editor to resolve syntax errors before building.',
-      ));
-    }
-
-    // 5. Target Platform Export Readiness
-    items.add(DiagnosticReportItem(
-      title: 'Multiplatform Build & Export Readiness',
-      category: 'Export Pipeline',
-      status: HealthStatus.passed,
-      details: 'Ready to build for: Web (CanvasKit), Windows Desktop, macOS, Linux, Android, iOS',
-      recommendation: 'Use "Export Standalone .emberpkg" or Flutter build tools to deploy.',
-    ));
-
-    final passedCount = items.where((i) => i.status == HealthStatus.passed).length;
-    final score = passedCount / items.length;
-
+    final content = widget.content?.call() ?? ProjectSession.contentOf(project);
+    final input = DoctorInput.fromContent(content,
+        projectPath: ProjectStorage.hasDiskLocation(project) ? project.path : '', hasUnsavedChanges: widget.hasUnsavedChanges?.call() ?? false);
+    final items = await ProjectDoctor.run(
+      input,
+      checkExports: widget.checkExports,
+      onOpenScript: widget.onOpenScript == null
+          ? null
+          : (file) {
+              Navigator.of(context).pop();
+              widget.onOpenScript!(file);
+            },
+      onSave: widget.onSave == null
+          ? null
+          : () async {
+              await widget.onSave!();
+              if (mounted) _runDiagnostics();
+            },
+    );
+    if (!mounted) return;
+    // Problems first, then warnings, passes and information (stable within each)
+    const order = [HealthStatus.failed, HealthStatus.warning, HealthStatus.passed, HealthStatus.info];
+    final sorted = [for (final st in order) ...items.where((i) => i.status == st)];
     setState(() {
-      _reports.addAll(items);
-      _healthScore = score;
+      _reports.addAll(sorted);
+      _healthScore = ProjectDoctor.score(items);
       _isRunningDiagnostics = false;
     });
   }
@@ -219,7 +182,9 @@ class _EmberDoctorDialogState extends State<EmberDoctorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final healthPercent = (_healthScore * 100).toInt();
+    final healthPercent = (_healthScore * 100).round();
+    final judged = _reports.where((r) => r.status != HealthStatus.info).length;
+    final passed = _reports.where((r) => r.status == HealthStatus.passed).length;
 
     return AlertDialog(
       backgroundColor: EmberTheme.panelBg,
@@ -238,8 +203,8 @@ class _EmberDoctorDialogState extends State<EmberDoctorDialog> {
           const Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Ember Doctor & Compiler Diagnostics', style: TextStyle(color: Colors.white, fontSize: 16)),
-              Text('System Health, Dependencies & Build Verification', style: TextStyle(color: Colors.white54, fontSize: 10)),
+              Text('Ember Doctor', style: TextStyle(color: Colors.white, fontSize: 16)),
+              Text('Checks your project and the export setup on this computer', style: TextStyle(color: Colors.white54, fontSize: 10)),
             ],
           ),
           const Spacer(),
@@ -251,7 +216,7 @@ class _EmberDoctorDialogState extends State<EmberDoctorDialog> {
               border: Border.all(color: healthPercent == 100 ? Colors.greenAccent : Colors.amberAccent),
             ),
             child: Text(
-              '$healthPercent% System Health',
+              _isRunningDiagnostics ? 'Checking…' : '$passed of $judged checks passed',
               style: TextStyle(
                 color: healthPercent == 100 ? Colors.greenAccent : Colors.amberAccent,
                 fontSize: 11,
@@ -271,7 +236,7 @@ class _EmberDoctorDialogState extends State<EmberDoctorDialog> {
                   children: [
                     CircularProgressIndicator(color: EmberTheme.emberOrange),
                     SizedBox(height: 16),
-                    Text('Running multi-point diagnostic checks...', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    Text('Checking the project…', style: TextStyle(color: Colors.white70, fontSize: 12)),
                   ],
                 ),
               )
@@ -311,6 +276,17 @@ class _EmberDoctorDialogState extends State<EmberDoctorDialog> {
                                 const SizedBox(height: 2),
                                 Text(r.recommendation!, style: TextStyle(color: r.status.color.withAlpha(200), fontSize: 10)),
                               ],
+                              if (r.action != null && r.actionLabel != null) ...[
+                                const SizedBox(height: 6),
+                                OutlinedButton(
+                                  onPressed: r.action,
+                                  style: OutlinedButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    side: BorderSide(color: r.status.color.withAlpha(160)),
+                                  ),
+                                  child: Text(r.actionLabel!, style: TextStyle(color: r.status.color, fontSize: 11)),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -324,7 +300,7 @@ class _EmberDoctorDialogState extends State<EmberDoctorDialog> {
         TextButton.icon(
           onPressed: _isRunningDiagnostics ? null : _runDiagnostics,
           icon: const Icon(Icons.refresh_rounded, size: 16, color: Colors.white70),
-          label: const Text('Re-run Checks', style: TextStyle(color: Colors.white70)),
+          label: const Text('Check again', style: TextStyle(color: Colors.white70)),
         ),
         ElevatedButton.icon(
           style: ElevatedButton.styleFrom(backgroundColor: EmberTheme.surfaceBg, side: const BorderSide(color: EmberTheme.borderMuted)),

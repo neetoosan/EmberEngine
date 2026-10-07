@@ -254,16 +254,44 @@ class FlappyCloud extends GameScript {
   }
 }
 
+/// The compiled versions, kept (hidden) so projects made from older templates
+/// still run. New projects use the Ember Script versions in flappy_scripts.dart.
 void registerFlappyScripts() {
-  ScriptRegistry.register('Flappy Game', () => FlappyGame());
-  ScriptRegistry.register('Flappy Bird', () => FlappyBird());
-  ScriptRegistry.register('Flappy Pipe', () => FlappyPipe());
-  ScriptRegistry.register('Flappy Ground Scroll', () => FlappyScroller(1.0, 32));
-  ScriptRegistry.register('Flappy Hills Scroll', () => FlappyScroller(0.25, 144));
-  ScriptRegistry.register('Flappy Cloud', () => FlappyCloud());
+  ScriptRegistry.register('Flappy Game', () => FlappyGame(), hidden: true);
+  ScriptRegistry.register('Flappy Bird', () => FlappyBird(), hidden: true);
+  ScriptRegistry.register('Flappy Pipe', () => FlappyPipe(), hidden: true);
+  ScriptRegistry.register('Flappy Ground Scroll', () => FlappyScroller(1.0, 32), hidden: true);
+  ScriptRegistry.register('Flappy Hills Scroll', () => FlappyScroller(0.25, 144), hidden: true);
+  ScriptRegistry.register('Flappy Cloud', () => FlappyCloud(), hidden: true);
 }
 
-/// Builds the complete Flappy Arcade scene.
+/// Two pipes with caps and an invisible score gate between them, as a
+/// disabled template entity ("Pipe Template") for `spawn()`.
+EmberEntity _pipeTemplate() {
+  final pair = EmberEntity(name: 'Pipe Template', enabled: false)
+    ..addComponent(Transform2DComponent(position: vm.Vector2(-5000, -5000), size: vm.Vector2.zero()))
+    ..addComponent(ScriptComponent(scriptName: 'flappy_pipe.ember'));
+
+  EmberEntity part(String name, double y, double w, double h, EmberAnchor anchor, String image) {
+    final e = EmberEntity(name: name, tags: {'deadly'});
+    e.addComponent(Transform2DComponent(position: vm.Vector2(0, y), size: vm.Vector2(w, h), anchor: anchor, zIndex: 1));
+    e.addComponent(FlameSpriteComponent(assetPath: '${Flappy.art}/$image', flipY: anchor == EmberAnchor.bottomCenter));
+    e.addComponent(FlameHitbox2DComponent(size: vm.Vector2(w, h), isSolid: false, debugDraw: false));
+    return e;
+  }
+
+  const half = Flappy.gap / 2;
+  pair.addChild(part('PipeTopBody', -half - Flappy.capHeight, Flappy.pipeWidth, 640, EmberAnchor.bottomCenter, 'pipe_body.png'));
+  pair.addChild(part('PipeTopCap', -half, Flappy.pipeWidth + 8, Flappy.capHeight, EmberAnchor.bottomCenter, 'pipe_cap.png'));
+  pair.addChild(part('PipeBottomBody', half + Flappy.capHeight, Flappy.pipeWidth, 640, EmberAnchor.topCenter, 'pipe_body.png'));
+  pair.addChild(part('PipeBottomCap', half, Flappy.pipeWidth + 8, Flappy.capHeight, EmberAnchor.topCenter, 'pipe_cap.png'));
+  pair.addChild(EmberEntity(name: 'ScoreGate')
+    ..addComponent(Transform2DComponent(size: vm.Vector2(6, Flappy.gap), anchor: EmberAnchor.center))
+    ..addComponent(FlameHitbox2DComponent(size: vm.Vector2(6, Flappy.gap), isSolid: false, debugDraw: false)));
+  return pair;
+}
+
+/// Builds the complete Flappy Arcade scene (gameplay in [flappyScripts]).
 EmberScene buildFlappyScene() {
   final scene = EmberScene(name: 'MainScene');
 
@@ -286,11 +314,11 @@ EmberScene buildFlappyScene() {
   // Clouds and hills (background)
   for (final (i, p) in [vm.Vector2(40, 90), vm.Vector2(170, 150), vm.Vector2(260, 60)].indexed) {
     scene.addEntity(sprite('Cloud_${i + 1}', p, vm.Vector2(64, 28), 'cloud.png', anchor: EmberAnchor.center, z: -3)
-      ..addComponent(ScriptComponent(scriptName: 'Flappy Cloud')));
+      ..addComponent(ScriptComponent(scriptName: 'flappy_cloud.ember')));
   }
   final hills = EmberEntity(name: 'Hills')
     ..addComponent(Transform2DComponent(position: vm.Vector2(0, Flappy.groundTop - 48), size: vm.Vector2.zero()))
-    ..addComponent(ScriptComponent(scriptName: 'Flappy Hills Scroll'));
+    ..addComponent(ScriptComponent(scriptName: 'flappy_scroller.ember', vars: {'speedFactor': 0.25, 'wrapWidth': 144}));
   for (var i = 0; i < 4; i++) {
     hills.addChild(sprite('HillTile_$i', vm.Vector2(i * 144.0, 0), vm.Vector2(144, 48), 'hills.png', z: -2));
   }
@@ -299,7 +327,7 @@ EmberScene buildFlappyScene() {
   // Scrolling ground (drawn over the pipes)
   final ground = EmberEntity(name: 'Ground')
     ..addComponent(Transform2DComponent(position: vm.Vector2(0, Flappy.groundTop), size: vm.Vector2.zero()))
-    ..addComponent(ScriptComponent(scriptName: 'Flappy Ground Scroll'));
+    ..addComponent(ScriptComponent(scriptName: 'flappy_scroller.ember', vars: {'speedFactor': 1.0, 'wrapWidth': 32}));
   for (var i = 0; i < 11; i++) {
     ground.addChild(sprite('GroundTile_$i', vm.Vector2(i * 32.0, 0), vm.Vector2(32, 64), 'ground.png', z: 5));
   }
@@ -308,12 +336,15 @@ EmberScene buildFlappyScene() {
   // The bird
   scene.addEntity(sprite('Bird', vm.Vector2(80, 240), vm.Vector2(34, 24), 'bird.png', anchor: EmberAnchor.center, z: 10)
     ..addComponent(FlameHitbox2DComponent(size: vm.Vector2(24, 16), offset: vm.Vector2(5, 4), isSolid: false))
-    ..addComponent(ScriptComponent(scriptName: 'Flappy Bird')));
+    ..addComponent(ScriptComponent(scriptName: 'flappy_bird.ember')));
   final birdSprite = scene.findByName('Bird')!.getComponent<FlameSpriteComponent>()!;
   birdSprite.columns = 3;
 
+  // Pipe pair "prefab": disabled and parked off-screen; the game script spawns copies
+  scene.addEntity(_pipeTemplate());
+
   // Game manager and on-screen text
-  scene.addEntity(EmberEntity(name: 'Game')..addComponent(ScriptComponent(scriptName: 'Flappy Game')));
+  scene.addEntity(EmberEntity(name: 'Game')..addComponent(ScriptComponent(scriptName: 'flappy_game.ember')));
   scene.addEntity(EmberEntity(name: 'ScoreText')
     ..addComponent(UITextComponent(text: '0', fontSize: 44, anchor: EmberAnchor.topCenter, offset: vm.Vector2(0, 40))));
   scene.addEntity(EmberEntity(name: 'MessageText')

@@ -56,6 +56,10 @@ class Camera2DComponent extends EmberComponent {
   /// Fills the game area behind everything.
   Color backgroundColor;
 
+  /// 1 shows the design area at its size; 0.5 shows twice as much world
+  /// (zoomed out), 2 shows half (zoomed in).
+  double zoom;
+
   Camera2DComponent({
     this.designWidth = 640,
     this.designHeight = 360,
@@ -66,6 +70,7 @@ class Camera2DComponent extends EmberComponent {
     vm.Vector2? boundsMin,
     vm.Vector2? boundsMax,
     this.backgroundColor = const Color(0xFF121316),
+    this.zoom = 1,
   })  : deadZone = deadZone ?? vm.Vector2.zero(),
         boundsMin = boundsMin ?? vm.Vector2.zero(),
         boundsMax = boundsMax ?? vm.Vector2(640, 360);
@@ -82,17 +87,50 @@ class Camera2DComponent extends EmberComponent {
   vm.Vector2 get position =>
       entity?.getComponent<Transform2DComponent>()?.worldPosition ?? vm.Vector2.zero();
 
+  double get _zoom => zoom <= 0.01 ? 0.01 : zoom;
+
+  /// World area the camera shows (design size divided by [zoom]).
+  double get viewWidth => designWidth / _zoom;
+  double get viewHeight => designHeight / _zoom;
+
   /// How this camera maps onto a window of [screen] size.
   CameraView2D viewFor(Size screen) {
     final hasDesign = designWidth > 0 && designHeight > 0;
-    final zoom = hasDesign ? math.min(screen.width / designWidth, screen.height / designHeight) : 1.0;
-    final w = hasDesign ? designWidth * zoom : screen.width;
-    final h = hasDesign ? designHeight * zoom : screen.height;
+    final fit = hasDesign ? math.min(screen.width / designWidth, screen.height / designHeight) : 1.0;
+    final w = hasDesign ? designWidth * fit : screen.width;
+    final h = hasDesign ? designHeight * fit : screen.height;
     return CameraView2D(
       viewport: Rect.fromCenter(center: Offset(screen.width / 2, screen.height / 2), width: w, height: h),
-      zoom: zoom,
-      center: position,
+      zoom: fit * _zoom,
+      center: position + _shakeOffset,
     );
+  }
+
+  // --- Screen shake ---
+
+  double _shakeAmount = 0;
+  double _shakeTime = 0;
+  double _shakeDuration = 0;
+  vm.Vector2 _shakeOffset = vm.Vector2.zero();
+  final math.Random _rng = math.Random();
+
+  /// Shakes the view by up to [amount] world pixels, fading out over [seconds].
+  void shake(double amount, double seconds) {
+    final remaining = _shakeTime < _shakeDuration ? _shakeAmount * (1 - _shakeTime / _shakeDuration) : 0.0;
+    if (amount < remaining) return; // a stronger shake is still running
+    _shakeAmount = amount;
+    _shakeDuration = math.max(0.01, seconds);
+    _shakeTime = 0;
+  }
+
+  void _updateShake(double dt) {
+    if (_shakeTime >= _shakeDuration) {
+      _shakeOffset = vm.Vector2.zero();
+      return;
+    }
+    _shakeTime += dt;
+    final strength = _shakeAmount * (1 - (_shakeTime / _shakeDuration).clamp(0.0, 1.0));
+    _shakeOffset = vm.Vector2((_rng.nextDouble() * 2 - 1) * strength, (_rng.nextDouble() * 2 - 1) * strength);
   }
 
   @override
@@ -100,6 +138,7 @@ class Camera2DComponent extends EmberComponent {
 
   @override
   void onUpdate(double dt) {
+    _updateShake(dt);
     final t = entity?.getComponent<Transform2DComponent>();
     final target = _targetPosition();
     if (t == null) return;
@@ -130,8 +169,8 @@ class Camera2DComponent extends EmberComponent {
 
   vm.Vector2 _clamp(vm.Vector2 p) {
     if (!boundsEnabled) return p;
-    final halfW = designWidth / 2;
-    final halfH = designHeight / 2;
+    final halfW = viewWidth / 2;
+    final halfH = viewHeight / 2;
     double clampAxis(double v, double lo, double hi) => hi - lo < 0 ? (lo + hi) / 2 : v.clamp(lo, hi);
     return vm.Vector2(
       clampAxis(p.x, boundsMin.x + halfW, boundsMax.x - halfW),
@@ -162,6 +201,7 @@ class Camera2DComponent extends EmberComponent {
   List<InspectableProperty> get inspectableProperties => [
         _num('designWidth', 'Design Width', () => designWidth, (v) => designWidth = v, min: 0),
         _num('designHeight', 'Design Height', () => designHeight, (v) => designHeight = v, min: 0),
+        _num('zoom', 'Zoom', () => zoom, (v) => zoom = v.clamp(0.05, 20).toDouble(), step: 0.05, min: 0.05, max: 20),
         InspectableProperty<String>(
           name: 'followTarget',
           label: 'Follow Entity',
@@ -237,6 +277,7 @@ class Camera2DComponent extends EmberComponent {
         'boundsMin': [boundsMin.x, boundsMin.y],
         'boundsMax': [boundsMax.x, boundsMax.y],
         'backgroundColor': backgroundColor.toARGB32(),
+        if (zoom != 1) 'zoom': zoom,
       };
 
   @override
@@ -255,6 +296,7 @@ class Camera2DComponent extends EmberComponent {
     boundsMin = v2(json['boundsMin'], vm.Vector2.zero());
     boundsMax = v2(json['boundsMax'], vm.Vector2(640, 360));
     backgroundColor = Color(json['backgroundColor'] as int? ?? 0xFF121316);
+    zoom = (json['zoom'] as num?)?.toDouble() ?? 1;
     notifyListeners();
   }
 

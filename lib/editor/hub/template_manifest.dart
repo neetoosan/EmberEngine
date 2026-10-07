@@ -5,23 +5,29 @@ import '../../core/game_script.dart';
 import '../../core/scene.dart';
 import '../../core/transform2d.dart';
 import '../../core/transform3d.dart';
-import '../../subsystems/two_d/flame_components.dart';
 import '../../subsystems/three_d/camera3d.dart';
 import '../../subsystems/three_d/components3d.dart';
 import '../../subsystems/three_d/lighting.dart';
 import '../../subsystems/three_d/material.dart';
-import '../../subsystems/physics/character_controller2d.dart';
 import '../../subsystems/physics/character_controller3d.dart';
 import '../../subsystems/particles/particle_system.dart';
 import '../../subsystems/audio/audio_component.dart';
 import '../../subsystems/audio/audio_system.dart';
 import '../../templates/flappy_game.dart';
+import '../../templates/flappy_scripts.dart';
+import '../../subsystems/ui/ui_text.dart';
 import '../../templates/legends_game.dart';
+import '../../templates/legends_scripts.dart';
 import '../../templates/quest_game.dart';
+import '../../templates/platformer_starter.dart';
+import '../../templates/quest_scripts.dart';
+import '../../templates/siege_game.dart';
+import '../../templates/siege_scripts.dart';
 import 'project_manifest.dart';
 
 /// Identifier enum for built-in starter templates.
 enum ProjectTemplateType {
+  siege,
   legends,
   quest,
   flappy,
@@ -75,22 +81,34 @@ class ProjectTemplate {
 
     // Build template specific scene & scripts
     switch (type) {
+      case ProjectTemplateType.siege:
+        project.scenes[Siege.title] = buildSiegeTitle();
+        project.scenes['Level 1'] = buildSiegeLevel1();
+        project.scenes['Level 2'] = buildSiegeLevel2();
+        project.scenes['Level 3'] = buildSiegeLevel3();
+        project.defaultSceneName = Siege.title;
+        project.scripts.addAll(siegeScripts); // editable in the Script workspace
+        project.assets.addAll(Siege.assetFiles);
+        break;
       case ProjectTemplateType.legends:
         project.scenes[Legends.title] = buildLegendsTitle();
         project.scenes[Legends.village] = buildLegendsVillage();
         project.scenes[Legends.field] = buildLegendsField();
         project.scenes[Legends.dungeon] = buildLegendsDungeon();
         project.defaultSceneName = Legends.title;
+        project.scripts.addAll(legendsScripts); // editable in the Script workspace
         project.assets.addAll(Legends.assetFiles);
         break;
       case ProjectTemplateType.quest:
         project.scenes['Level 1'] = buildQuestLevel1();
         project.scenes['Level 2'] = buildQuestLevel2();
         project.defaultSceneName = 'Level 1';
+        project.scripts.addAll(questScripts); // editable in the Script workspace
         project.assets.addAll(Quest.assetFiles);
         break;
       case ProjectTemplateType.flappy:
         project.scenes['MainScene'] = buildFlappyScene();
+        project.scripts.addAll(flappyScripts); // editable in the Script workspace
         // Pipes are spawned by script, so list their art explicitly
         project.assets.addAll(['${Flappy.art}/pipe_body.png', '${Flappy.art}/pipe_cap.png']);
         break;
@@ -114,154 +132,9 @@ class ProjectTemplate {
   // --- Template Generators ---
 
   void _build2DPlatformerTemplate(EmberProject project) {
-    final scene = EmberScene(name: 'MainScene');
-
-    // 1. World & TileMap
-    final world = EmberEntity(name: 'World2D');
-    world.addComponent(Transform2DComponent(position: vm.Vector2(0, 0)));
-
-    final tiles = List.filled(24 * 14, 0);
-    // Ground floor line (row 12 & 13) with tile ID 1
-    for (int col = 0; col < 24; col++) {
-      tiles[12 * 24 + col] = 1;
-      tiles[13 * 24 + col] = 1;
-    }
-    // Floating platforms with tile ID 5
-    for (final col in [4, 5, 6]) {
-      tiles[9 * 24 + col] = 5;
-    }
-    for (final col in [10, 11, 12, 13]) {
-      tiles[7 * 24 + col] = 5;
-    }
-    for (final col in [17, 18, 19]) {
-      tiles[5 * 24 + col] = 5;
-    }
-
-    world.addComponent(FlameTileMapComponent(
-      columns: 24,
-      rows: 14,
-      tileSize: 32.0,
-      tiles: tiles,
-    ));
-    scene.addEntity(world);
-
-    // 2. Player Character
-    final player = EmberEntity(name: 'HeroPlayer');
-    player.addComponent(Transform2DComponent(
-      position: vm.Vector2(64, 300),
-      size: vm.Vector2(48, 48),
-      anchor: EmberAnchor.bottomCenter,
-    ));
-    player.addComponent(FlameSpriteComponent(
-      assetPath: 'assets/sprites/hero_knight.png',
-      tint: const Color(0xFFFFFFFF),
-    ));
-    player.addComponent(CharacterController2DComponent(
-      moveSpeed: 240.0,
-      jumpVelocity: 480.0,
-      gravity: 980.0,
-      coyoteTimeDuration: 0.12,
-      jumpBufferDuration: 0.10,
-      groundY: 600.0, // Safety floor below the level; tiles are the real ground
-    ));
-    player.addComponent(ScriptComponent(scriptName: 'Platformer 2D Controller'));
-    player.addComponent(ParticleEmitter2DComponent(
-      preset: ParticlePreset.sparkBurst,
-      startColor: const Color(0xFFFF9100),
-      endColor: const Color(0xFFFFD54F),
-      maxParticles: 40,
-      spawnRate: 0.0, // bursts on jump
-    ));
-    player.addComponent(AudioSourceComponent(
-      clip: 'jump',
-      category: AudioCategory.sfx,
-      volume: 0.8,
-    ));
-    scene.addEntity(player);
-
-    // 3. Collectable Coins
-    final coinPositions = [
-      vm.Vector2(160, 240),
-      vm.Vector2(380, 180),
-      vm.Vector2(580, 120),
-    ];
-    for (int i = 0; i < coinPositions.length; i++) {
-      final coin = EmberEntity(name: 'Coin_${i + 1}');
-      coin.addComponent(Transform2DComponent(
-        position: coinPositions[i],
-        size: vm.Vector2(24, 24),
-        anchor: EmberAnchor.center,
-      ));
-      coin.addComponent(FlameSpriteComponent(
-        assetPath: 'assets/sprites/gold_coin.png',
-        tint: const Color(0xFFFFD700),
-      ));
-      coin.addComponent(FlameHitbox2DComponent(
-        size: vm.Vector2(24, 24),
-        isSolid: false,
-      ));
-      coin.addComponent(ScriptComponent(scriptName: 'Collectible'));
-      scene.addEntity(coin);
-    }
-
-    project.scenes['MainScene'] = scene;
-
-    // Attach Starter Scripts
-    project.scripts['player_controller_2d.dart'] = '''
-import 'package:ember_engine/core/game_script.dart';
-import 'package:ember_engine/core/input.dart';
-import 'package:ember_engine/subsystems/physics/character_controller2d.dart';
-import 'package:ember_engine/subsystems/audio/audio_component.dart';
-import 'package:ember_engine/subsystems/particles/particle_system.dart';
-
-/// 2D Platformer Player Controller Script
-class PlayerController2D extends GameScript {
-  CharacterController2DComponent? controller;
-  AudioSourceComponent? jumpAudio;
-  ParticleEmitter2DComponent? trailParticles;
-
-  @override
-  void onStart() {
-    controller = getComponent<CharacterController2DComponent>();
-    jumpAudio = getComponent<AudioSourceComponent>();
-    trailParticles = getComponent<ParticleEmitter2DComponent>();
-  }
-
-  @override
-  void onUpdate(double dt) {
-    if (controller == null) return;
-
-    double horizontal = 0.0;
-    if (Input.isActionPressed(EngineAction.moveRight)) horizontal += 1.0;
-    if (Input.isActionPressed(EngineAction.moveLeft)) horizontal -= 1.0;
-
-    controller?.move(horizontal, dt);
-
-    if (Input.isActionJustPressed(EngineAction.jump)) {
-      if (controller?.jump() ?? false) {
-        jumpAudio?.play();
-        trailParticles?.triggerBurst(15);
-      }
-    }
-  }
-}
-''';
-
-    project.scripts['coin_collector.dart'] = '''
-import 'package:ember_engine/core/game_script.dart';
-import 'package:ember_engine/subsystems/audio/audio_system.dart';
-
-/// Coin Pick-up & Scoring Logic
-class CoinCollector extends GameScript {
-  int score = 0;
-
-  void onCollectCoin(String coinEntityName) {
-    score += 100;
-    AudioSystem.instance.play(clip: 'coin');
-    scene?.removeEntity(scene!.findByName(coinEntityName)!);
-  }
-}
-''';
+    project.scenes['MainScene'] = buildPlatformerStarter();
+    project.scripts.addAll(platformerStarterScripts); // editable in the Script workspace
+    project.assets.addAll(platformerStarterAssets);
   }
 
   void _build3DFpsTemplate(EmberProject project) {
@@ -370,47 +243,34 @@ class CoinCollector extends GameScript {
 
     project.scenes['MainScene'] = scene;
 
-    // Attach Starter Scripts
-    project.scripts['fps_controller.dart'] = '''
-import 'package:flutter/services.dart';
-import 'package:ember_engine/core/game_script.dart';
-import 'package:ember_engine/core/input.dart';
-import 'package:ember_engine/subsystems/physics/character_controller3d.dart';
-import 'package:ember_engine/subsystems/audio/audio_component.dart';
+    // Crosshair and hit counter (on-screen UI), and the target's Ember Script
+    scene.addEntity(EmberEntity(name: 'Crosshair')
+      ..addComponent(UITextComponent(text: '+', fontSize: 28, anchor: EmberAnchor.center, offset: vm.Vector2(0, -14))));
+    scene.addEntity(EmberEntity(name: 'HitsText')
+      ..addComponent(UITextComponent(text: 'Hits 0', fontSize: 20, anchor: EmberAnchor.topRight, offset: vm.Vector2(-20, 14))));
+    scene.addEntity(EmberEntity(name: 'HelpText')
+      ..addComponent(UITextComponent(
+          text: 'WASD move · mouse look · click / F shoot · Space jump · Shift sprint', fontSize: 13, anchor: EmberAnchor.bottomCenter, offset: vm.Vector2(0, -14))));
+    target.addComponent(ScriptComponent(scriptName: 'target_bot.ember'));
+    project.scripts['target_bot.ember'] = '''
+// The target bot: strafes left and right; counts the hits it takes.
+// (Movement and shooting come from the built-in FPS Player Controller.)
+var range = 5.0;       // how far it strafes from the middle
+var speed = 1.2;
+var _hits = 0;
+var _homeX = 0.0;
 
-/// 3D First Person Shooter Controller Script
-class FpsController extends GameScript {
-  CharacterController3DComponent? controller;
-  AudioSourceComponent? weaponAudio;
+void onStart() {
+  _homeX = self.x;
+}
 
-  @override
-  void onStart() {
-    controller = getComponent<CharacterController3DComponent>();
-    weaponAudio = getComponent<AudioSourceComponent>();
-  }
+void onUpdate(dt) {
+  self.x = _homeX + sin(Game.time * speed) * range;
+}
 
-  @override
-  void onUpdate(double dt) {
-    if (controller == null) return;
-
-    double moveX = 0;
-    double moveZ = 0;
-
-    if (Input.isActionPressed(EngineAction.moveForward)) moveZ -= 1;
-    if (Input.isActionPressed(EngineAction.moveBackward)) moveZ += 1;
-    if (Input.isActionPressed(EngineAction.moveLeft)) moveX -= 1;
-    if (Input.isActionPressed(EngineAction.moveRight)) moveX += 1;
-
-    final isSprinting = Input.isKeyPressed(LogicalKeyboardKey.shiftLeft);
-    controller?.move(moveX, moveZ, isSprinting: isSprinting, dt: dt);
-
-    if (Input.isActionJustPressed(EngineAction.jump)) {
-      controller?.jump();
-    }
-    if (Input.isActionJustPressed(EngineAction.fire)) {
-      weaponAudio?.play();
-    }
-  }
+void onDamaged(amount, source) {
+  _hits++;
+  setText("HitsText", "Hits \$_hits");
 }
 ''';
   }
@@ -467,22 +327,17 @@ class FpsController extends GameScript {
 
     project.scenes['MainScene'] = scene;
 
-    // Attach Starter Scripts
-    project.scripts['particle_burst_trigger.dart'] = '''
-import 'package:flutter/services.dart';
-import 'package:ember_engine/core/game_script.dart';
-import 'package:ember_engine/core/input.dart';
-import 'package:ember_engine/subsystems/particles/particle_system.dart';
+    flame3d.addComponent(ScriptComponent(scriptName: 'bursts.ember'));
+    spark3d.addComponent(ScriptComponent(scriptName: 'bursts.ember'));
+    scene.addEntity(EmberEntity(name: 'HelpText')
+      ..addComponent(UITextComponent(
+          text: 'Press Space or click to fire bursts · select an emitter to tweak it', fontSize: 14, anchor: EmberAnchor.bottomCenter, offset: vm.Vector2(0, -14))));
+    project.scripts['bursts.ember'] = '''
+// Fires a burst of particles on Space or a click (on both emitters).
+var count = 40;
 
-/// Triggers particle bursts upon spacebar or mouse click
-class ParticleBurstTrigger extends GameScript {
-  @override
-  void onUpdate(double dt) {
-    if (Input.isKeyJustPressed(LogicalKeyboardKey.space)) {
-      final emitter = getComponent<ParticleEmitter3DComponent>();
-      emitter?.triggerBurst(40);
-    }
-  }
+void onUpdate(dt) {
+  if (Input.pressed("Space") || Input.click) self.get("Particle Emitter 3D").burst(count);
 }
 ''';
   }
@@ -516,24 +371,41 @@ class ParticleBurstTrigger extends GameScript {
   }
 }
 
-/// Catalog of all 4 official built-in starter templates.
+/// Every built-in starter template, in the order the Project Hub shows them.
 class TemplateCatalog {
   static const List<ProjectTemplate> templates = [
     ProjectTemplate(
       type: ProjectTemplateType.platformer2d,
       title: '2D Platformer Adventure',
-      subtitle: 'Flame 2D Engine with Tilemaps & Kinematic Character',
+      subtitle: 'A Small Level to Learn From',
       description:
-          'A complete 2D side-scrolling platformer featuring Flame tilemap collision grids, animated knight sprites, collectable coins, and responsive 2D physics with coyote time & jump buffering.',
+          'One short side-scrolling level: run, jump over a pit and up the stone steps, and collect all 12 coins. The hero, coins and HUD are three short Ember Scripts, a good first read before Ember Quest.',
       icon: Icons.videogame_asset_rounded,
       accentColor: Color(0xFFFF5722),
       defaultPipeline: RenderPipelineMode.twoD,
-      tags: ['2D', 'Flame', 'Platformer', 'Physics', 'Tilemap'],
+      tags: ['2D', 'Platformer', 'Tilemap', 'Beginner'],
       features: [
-        'Flame 2D Tilemap grid system',
-        'Kinematic 2D Character with Coyote Time',
-        'Animated sprite sheets & jump bursts',
-        'Collectable coins with sound FX',
+        'Platformer controller with coyote time and jump buffering',
+        'Animated hero sprite sheet (idle, run, jump)',
+        'Tilemap level you can repaint, one-way planks',
+        'Coins, a coin counter and a pit that restarts the level',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.siege,
+      title: 'Ember Siege',
+      subtitle: 'Physics Slingshot Puzzle (Angry Birds-style)',
+      description:
+          'Drag back the slingshot and fling embers at frost castles. Real rigid-body physics: wood, ice and stone that tip, stack, crack and shatter, powder kegs that blow, and imps to defeat. Three levels, stars, unlocks and saved best scores.',
+      icon: Icons.local_fire_department_rounded,
+      accentColor: Color(0xFFEA580C),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Physics', 'Puzzle', 'Touch', 'Pixel art', 'Music'],
+      features: [
+        'Rigid Body 2D: stacking, tipping, impacts, explosions',
+        'Drag-to-aim slingshot with trajectory preview',
+        'Embers, heavy coal and splitting sparks',
+        'Three castles, stars, unlocks and best scores',
       ],
     ),
     ProjectTemplate(
@@ -590,35 +462,35 @@ class TemplateCatalog {
     ProjectTemplate(
       type: ProjectTemplateType.fps3d,
       title: '3D FPS Arena',
-      subtitle: 'Spatial 3D Viewport, Capsule Physics & Lighting',
+      subtitle: 'First-Person Movement, Shooting & Lighting in Basic 3D',
       description:
-          'A combat arena with first-person capsule movement, mouse-look camera, procedural geometry, real-time lighting with shadows, weapon audio triggers, and 3D hit spark emitters.',
+          'A small arena to walk around in first person: mouse-look, jumping and sprinting, pillars that block you, and a target bot that sparks when you shoot it. Lit by a sun light. (3D in Ember is basic: primitive shapes, no shadows.)',
       icon: Icons.view_in_ar_rounded,
       accentColor: Color(0xFF3B82F6),
       defaultPipeline: RenderPipelineMode.threeD,
-      tags: ['3D', 'FPS', 'Kinematics', 'Lighting', 'Audio'],
+      tags: ['3D', 'FPS', 'Lighting', 'Audio'],
       features: [
-        '3D FPS Character Controller (WASD + Mouse Look)',
-        'Directional & Point light shadow casting',
-        'Spatial 3D audio playback',
-        'Procedural cylinder arena pillars & target dummy',
+        'First-person controller (WASD, mouse look, jump, sprint)',
+        'Click or F to shoot: hits spark and score',
+        'Directional sun light and materials',
+        'Pillars with collision, a target bot',
       ],
     ),
     ProjectTemplate(
       type: ProjectTemplateType.particles,
       title: 'Procedural Particle Playground',
-      subtitle: '2D & 3D GPU Particle Emitters & Simulation',
+      subtitle: '3D Particle Emitters to Experiment With',
       description:
-          'An interactive visual laboratory for crafting custom particle effects. Pre-configured with emberFire, sparkBurst, and smokeTrail presets, color ramps, and burst triggers.',
+          'A playground for particle effects: fire and spark emitters with colour and size ramps. Press Space or click while playing to fire bursts, then tweak the emitters in the Inspector.',
       icon: Icons.auto_awesome_rounded,
       accentColor: Color(0xFFEC4899),
       defaultPipeline: RenderPipelineMode.hybrid,
       tags: ['Particles', 'VFX', 'Simulation', 'Color Ramps'],
       features: [
-        'Multi-preset 2D & 3D particle emitters',
-        'Interactive burst testing station',
-        'Smooth color gradient & size interpolation',
-        'Orbit camera inspection scene',
+        'Fire, spark, smoke and magic presets',
+        'Space / click fires bursts while playing',
+        'Colour and size over lifetime',
+        'Edit every emitter setting live in the Inspector',
       ],
     ),
     ProjectTemplate(

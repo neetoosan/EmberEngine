@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'project_manifest.dart';
 
 /// Single-file archive manager for portable `.emberpkg` bundles.
@@ -10,7 +11,11 @@ class ProjectPackageManager {
   static const String packageSignature = 'EMBER_ENGINE_PROJECT_PACKAGE';
 
   /// Serializes an [EmberProject] into a `.emberpkg` package JSON string.
-  static String exportToPackageString(EmberProject project) {
+  ///
+  /// [files] (project-relative path -> bytes: the project's images and
+  /// sounds) are embedded so the package is a complete, self-contained game —
+  /// used for web and Android, where there is no folder next to the game.
+  static String exportToPackageString(EmberProject project, {Map<String, Uint8List>? files}) {
     final manifestData = project.toJson();
     final packagePayload = {
       'signature': packageSignature,
@@ -18,9 +23,26 @@ class ProjectPackageManager {
       'exportedAt': DateTime.now().toIso8601String(),
       'project': manifestData,
       'checksum': _computeChecksum(manifestData.toString()),
+      if (files != null && files.isNotEmpty) 'files': {for (final e in files.entries) e.key: base64Encode(e.value)},
     };
 
-    return const JsonEncoder.withIndent('  ').convert(packagePayload);
+    return files == null || files.isEmpty
+        ? const JsonEncoder.withIndent('  ').convert(packagePayload)
+        : jsonEncode(packagePayload); // compact: embedded files make it large
+  }
+
+  /// A package's project plus its embedded files (empty if none).
+  static (EmberProject, Map<String, Uint8List>) importWithFiles(String packageJsonStr) {
+    final project = importFromPackageString(packageJsonStr);
+    final decoded = jsonDecode(packageJsonStr) as Map<String, dynamic>;
+    final raw = decoded['files'];
+    final files = <String, Uint8List>{};
+    if (raw is Map) {
+      for (final e in raw.entries) {
+        files['${e.key}'] = base64Decode('${e.value}');
+      }
+    }
+    return (project, files);
   }
 
   /// Deserializes a `.emberpkg` package JSON string into an [EmberProject].

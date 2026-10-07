@@ -42,8 +42,10 @@ class AudioOutput implements AudioBackend {
 
   /// Starts routing [AudioSystem] playback to real audio output.
   void attach() {
-    if (_attached || kIsWeb) return;
+    if (_attached) return;
     _attached = true;
+    // Asset clips are named by their full bundle key (assets/templates/..., assets/game/...)
+    AudioCache.instance = AudioCache(prefix: '');
     AudioSystem.instance.backend = this;
   }
 
@@ -55,21 +57,48 @@ class AudioOutput implements AudioBackend {
     unawaited(_play(voice, volume, pan));
   }
 
+  /// Web keeps sounds in memory; desktop and mobile play from files.
+  final Map<String, Future<Uint8List?>> _bytesCache = {};
+
+  Future<Source?> _sourceFor(AudioVoice voice) async {
+    if (isFileClip(voice.clip)) {
+      // 1. Inside the exported game package (web / Android)
+      final embedded = EmberAssets.instance.embedded[voice.clip];
+      if (embedded != null) {
+        if (kIsWeb) return BytesSource(embedded, mimeType: _mimeFor(voice.clip));
+        final path = await _wavCache.putIfAbsent('file:${voice.clip}', () => _writeTemp(voice.clip, embedded));
+        return path == null ? null : DeviceFileSource(path);
+      }
+      // 2. The project / game folder (desktop)
+      final file = EmberAssets.instance.resolveFile(voice.clip);
+      if (file != null && await file.exists()) return DeviceFileSource(file.path);
+      // 3. The engine's bundled assets (template music)
+      return AssetSource(voice.clip);
+    }
+    // Procedural effect. Pitch is baked into the WAV sample rate, quantised so the cache stays small.
+    final pitchStep = (voice.pitch.clamp(0.5, 2.0) * 20).round() / 20;
+    if (kIsWeb) {
+      final bytes = await _bytesCache.putIfAbsent('${voice.clip}@$pitchStep', () async {
+        final buffer = synthesize(voice.clip);
+        return buffer == null ? null : encodeWav(buffer.samples, (buffer.sampleRate * pitchStep).round());
+      });
+      return bytes == null ? null : BytesSource(bytes, mimeType: 'audio/wav');
+    }
+    final path = await _wavCache.putIfAbsent('${voice.clip}@$pitchStep', () => _writeWav(voice.clip, pitchStep));
+    return path == null ? null : DeviceFileSource(path);
+  }
+
+  static String _mimeFor(String clip) {
+    final c = clip.toLowerCase();
+    if (c.endsWith('.mp3')) return 'audio/mpeg';
+    if (c.endsWith('.ogg')) return 'audio/ogg';
+    return 'audio/wav';
+  }
+
   Future<void> _play(AudioVoice voice, double volume, double pan) async {
     try {
-      final Source source;
-      if (isFileClip(voice.clip)) {
-        final file = EmberAssets.instance.resolveFile(voice.clip);
-        source = file != null && await file.exists()
-            ? DeviceFileSource(file.path)
-            : AssetSource(voice.clip.startsWith('assets/') ? voice.clip.substring(7) : voice.clip);
-      } else {
-        // Pitch is baked into the WAV sample rate, quantised so the cache stays small.
-        final pitchStep = (voice.pitch.clamp(0.5, 2.0) * 20).round() / 20;
-        final path = await _wavCache.putIfAbsent('${voice.clip}@$pitchStep', () => _writeWav(voice.clip, pitchStep));
-        if (path == null) return;
-        source = DeviceFileSource(path);
-      }
+      final source = await _sourceFor(voice);
+      if (source == null) return;
       if (!voice.isPlaying) return; // stopped while loading
 
       final AudioPlayer player;
@@ -145,14 +174,23 @@ class AudioOutput implements AudioBackend {
     }
   }
 
+  Future<Directory> _tempDir() async => _cacheDir ??= await Directory(
+        '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}ember_sfx',
+      ).create(recursive: true);
+
   Future<String?> _writeWav(String clip, double pitch) async {
     final buffer = synthesize(clip);
     if (buffer == null) return null;
-    _cacheDir ??= await Directory(
-      '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}ember_sfx',
-    ).create(recursive: true);
-    final file = File('${_cacheDir!.path}${Platform.pathSeparator}${clip}_${(pitch * 100).round()}.wav');
+    final file = File('${(await _tempDir()).path}${Platform.pathSeparator}${clip}_${(pitch * 100).round()}.wav');
     await file.writeAsBytes(encodeWav(buffer.samples, (buffer.sampleRate * pitch).round()), flush: true);
+    return file.path;
+  }
+
+  /// A game-package sound written to the temp folder once, so native players can open it.
+  Future<String?> _writeTemp(String clip, Uint8List bytes) async {
+    final name = clip.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final file = File('${(await _tempDir()).path}${Platform.pathSeparator}pkg_$name');
+    await file.writeAsBytes(bytes, flush: true);
     return file.path;
   }
 

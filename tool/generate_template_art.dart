@@ -2,14 +2,16 @@
 //
 //   dart run tool/generate_template_art.dart
 //
-// Output: assets/templates/flappy/*.png, assets/templates/quest/* and
-// assets/templates/legends/*
+// Output: assets/templates/{flappy,quest,legends,siege}/* and the Ember
+// Engine app icons (windows/runner/resources, android mipmaps, web/icons)
 // (committed, so this only needs to be re-run after changing the art below).
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 part 'legends_art.dart';
+part 'siege_art.dart';
+part 'app_icon_art.dart';
 
 void main() {
   void save(String folder, String name, _Img img) {
@@ -41,6 +43,12 @@ void main() {
 
   // Ember Legends (top-down action RPG)
   _saveLegends(save);
+
+  // Ember Siege (physics slingshot)
+  _saveSiege(save);
+
+  // Ember Engine app icon (Windows, Android, web)
+  _saveAppIcons();
 }
 
 // ---------------------------------------------------------------------------

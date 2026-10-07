@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Small persistent key/value store for game progress (best score, unlocked
 /// levels, settings). Values are kept in memory and written to
@@ -17,6 +18,8 @@ class SaveData {
 
   final Map<String, Object?> _values = {};
   File? _file;
+  SharedPreferences? _prefs;
+  String? _webKey;
   Future<void> _pendingWrite = Future.value();
 
   /// Loads the save file for [gameName]. Until this completes (or if storage
@@ -24,7 +27,24 @@ class SaveData {
   Future<void> open(String gameName) async {
     _values.clear();
     _file = null;
-    if (kIsWeb) return;
+    _webKey = null;
+    if (kIsWeb) {
+      // Browsers: the save lives in the site's local storage
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final key = 'EmberSaves/$gameName';
+        final stored = prefs.getString(key);
+        if (stored != null) {
+          final decoded = jsonDecode(stored);
+          if (decoded is Map<String, dynamic>) _values.addAll(decoded);
+        }
+        _prefs = prefs;
+        _webKey = key;
+      } catch (_) {
+        // Storage unavailable (private mode): keep working in memory.
+      }
+      return;
+    }
     try {
       final base = await getApplicationSupportDirectory();
       final dir = await Directory('${base.path}${Platform.pathSeparator}EmberSaves').create(recursive: true);
@@ -71,6 +91,12 @@ class SaveData {
   }
 
   void _write() {
+    final prefs = _prefs, webKey = _webKey;
+    if (prefs != null && webKey != null) {
+      final snapshot = jsonEncode(_values);
+      _pendingWrite = _pendingWrite.then((_) => prefs.setString(webKey, snapshot)).then((_) {}, onError: (Object _) {});
+      return;
+    }
     final file = _file;
     if (file == null) return;
     final snapshot = jsonEncode(_values);

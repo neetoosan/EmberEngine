@@ -407,11 +407,13 @@ class QuestDebris extends GameScript {
   }
 }
 
+/// The compiled versions, kept (hidden) so projects made from older templates
+/// still run. New projects use the Ember Script versions in quest_scripts.dart.
 void registerQuestScripts() {
-  ScriptRegistry.register('Quest Hero', () => QuestHero());
-  ScriptRegistry.register('Quest Coin Pop', () => QuestCoinPop());
-  ScriptRegistry.register('Quest Berry', () => QuestBerry());
-  ScriptRegistry.register('Quest Debris', () => QuestDebris());
+  ScriptRegistry.register('Quest Hero', () => QuestHero(), hidden: true);
+  ScriptRegistry.register('Quest Coin Pop', () => QuestCoinPop(), hidden: true);
+  ScriptRegistry.register('Quest Berry', () => QuestBerry(), hidden: true);
+  ScriptRegistry.register('Quest Debris', () => QuestDebris(), hidden: true);
 }
 
 // ---------------------------------------------------------------------------
@@ -529,7 +531,7 @@ class QuestLevelBuilder {
             ..addComponent(SpriteAnimatorComponent(clips: 'walk=0-1@4; squashed=2', defaultClip: 'walk'))
             ..addComponent(FlameHitbox2DComponent(size: vm.Vector2(26, 18), offset: vm.Vector2(3, 13), isSolid: false))
             ..addComponent(CharacterController2DComponent(moveSpeed: 50, gravity: 1500, groundY: 1e6))
-            ..addComponent(ScriptComponent(scriptName: 'Patrol Walker')));
+            ..addComponent(ScriptComponent(scriptName: 'quest_enemy.ember')));
         case 'goal':
           final pole = EmberEntity(name: 'Goal', tags: {'goal', if (extra != null) 'next:$extra'})
             ..addComponent(Transform2DComponent(position: feet(c, r), size: vm.Vector2(8, 256), anchor: EmberAnchor.bottomCenter, zIndex: 1))
@@ -546,9 +548,36 @@ class QuestLevelBuilder {
             ..addComponent(SpriteAnimatorComponent(clips: 'idle=0; run=1-3@12; jump=4; dead=5', defaultClip: 'idle'))
             ..addComponent(FlameHitbox2DComponent(size: vm.Vector2(22, 28), offset: vm.Vector2(5, 4), isSolid: false))
             ..addComponent(CharacterController2DComponent(moveSpeed: 190, jumpVelocity: 560, gravity: 1500, groundY: 1e6))
-            ..addComponent(ScriptComponent(scriptName: 'Quest Hero')));
+            ..addComponent(ScriptComponent(scriptName: 'quest_hero.ember')));
       }
     }
+
+    // Things the hero script spawns: disabled templates parked off-screen
+    final park = vm.Vector2(-5000, -5000);
+    scene.addEntity(EmberEntity(name: 'Coin Pop Template', enabled: false)
+      ..addComponent(Transform2DComponent(position: park, size: vm.Vector2(24, 24), anchor: EmberAnchor.bottomCenter, zIndex: 4))
+      ..addComponent(FlameSpriteComponent(assetPath: '${Quest.art}/coin.png', columns: 4))
+      ..addComponent(SpriteAnimatorComponent(clips: 'spin=0-3@16', defaultClip: 'spin'))
+      ..addComponent(ScriptComponent(scriptName: 'quest_coin_pop.ember')));
+    scene.addEntity(EmberEntity(name: 'Berry Template', tags: {'powerup'}, enabled: false)
+      ..addComponent(Transform2DComponent(position: park, size: vm.Vector2(28, 28), anchor: EmberAnchor.bottomCenter, zIndex: 3))
+      ..addComponent(FlameSpriteComponent(assetPath: '${Quest.art}/berry.png'))
+      ..addComponent(FlameHitbox2DComponent(size: vm.Vector2(24, 24), offset: vm.Vector2(2, 4), isSolid: false, debugDraw: false))
+      ..addComponent(CharacterController2DComponent(moveSpeed: 80, gravity: 1500, groundY: 1e6))
+      ..addComponent(ScriptComponent(scriptName: 'quest_berry.ember')));
+    scene.addEntity(EmberEntity(name: 'Debris Template', enabled: false)
+      ..addComponent(Transform2DComponent(position: park, size: vm.Vector2.zero()))
+      ..addComponent(ParticleEmitter2DComponent(
+        preset: ParticlePreset.sparkBurst,
+        spawnRate: 0,
+        startColor: const Color(0xFFC2410C),
+        endColor: const Color(0xFF431407),
+        startSize: 5,
+        endSize: 2,
+        speed: 140,
+        gravity: 900,
+      ))
+      ..addComponent(ScriptComponent(scriptName: 'quest_debris.ember')));
 
     // HUD
     scene.addEntity(EmberEntity(name: 'Hud')

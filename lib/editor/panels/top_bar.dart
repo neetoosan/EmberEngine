@@ -16,6 +16,9 @@ class EditorTopBar extends StatelessWidget {
   final VoidCallback? onToggleVirtualJoystick;
   final bool showVirtualJoystick;
   final VoidCallback? onSaveScene;
+
+  /// Shows a dot on the save button.
+  final bool hasUnsavedChanges;
   final VoidCallback? onOpenProjectHub;
   final VoidCallback? onOpenDoctor;
   final VoidCallback? onExportGame;
@@ -26,6 +29,11 @@ class EditorTopBar extends StatelessWidget {
   /// Scene | Script switch.
   final Widget? workspaceSwitch;
 
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
+  final bool canUndo;
+  final bool canRedo;
+
   const EditorTopBar({
     super.key,
     required this.engine,
@@ -34,11 +42,16 @@ class EditorTopBar extends StatelessWidget {
     this.onToggleVirtualJoystick,
     this.showVirtualJoystick = false,
     this.onSaveScene,
+    this.hasUnsavedChanges = false,
     this.onOpenProjectHub,
     this.onOpenDoctor,
     this.onExportGame,
     this.sceneSelector,
     this.workspaceSwitch,
+    this.onUndo,
+    this.onRedo,
+    this.canUndo = false,
+    this.canRedo = false,
   });
 
   @override
@@ -238,19 +251,22 @@ class EditorTopBar extends StatelessWidget {
                   borderRadius: BorderRadius.circular(4),
                   border: Border.all(color: EmberTheme.borderSubtle),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.search, size: 13, color: EmberTheme.textSecondary),
-                    SizedBox(width: 4),
-                    Text(
-                      'Ctrl+K',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        color: EmberTheme.textMuted,
+                    const Icon(Icons.search, size: 13, color: EmberTheme.textSecondary),
+                    // Narrow windows: icon only (the tooltip still names the shortcut)
+                    if (MediaQuery.sizeOf(context).width >= 1500) ...const [
+                      SizedBox(width: 4),
+                      Text(
+                        'Ctrl+K',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          color: EmberTheme.textMuted,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -259,11 +275,42 @@ class EditorTopBar extends StatelessWidget {
 
           const SizedBox(width: 8),
 
+          // 6b. Undo / Redo (scene edits)
+          if (onUndo != null) ...[
+            Tooltip(
+              message: 'Undo (Ctrl+Z)',
+              child: IconButton(
+                key: const ValueKey('undo-button'),
+                icon: Icon(Icons.undo, size: 16, color: canUndo ? EmberTheme.textSecondary : EmberTheme.textMuted.withValues(alpha: 0.4)),
+                onPressed: canUndo ? onUndo : null,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+            Tooltip(
+              message: 'Redo (Ctrl+Y)',
+              child: IconButton(
+                key: const ValueKey('redo-button'),
+                icon: Icon(Icons.redo, size: 16, color: canRedo ? EmberTheme.textSecondary : EmberTheme.textMuted.withValues(alpha: 0.4)),
+                onPressed: canRedo ? onRedo : null,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
+
           // 7. Save Project Button
           Tooltip(
-            message: 'Save Project (Ctrl+S)',
+            message: hasUnsavedChanges ? 'Save Project (Ctrl+S) — unsaved changes' : 'Save Project (Ctrl+S) — all changes saved',
             child: IconButton(
-              icon: const Icon(Icons.save_outlined, size: 16, color: EmberTheme.textSecondary),
+              key: const ValueKey('save-button'),
+              icon: Badge(
+                isLabelVisible: hasUnsavedChanges,
+                smallSize: 7,
+                backgroundColor: EmberTheme.accentEmber,
+                child: const Icon(Icons.save_outlined, size: 16, color: EmberTheme.textSecondary),
+              ),
               onPressed: onSaveScene ?? () {
                 final jsonStr = SceneSerializer.saveSceneToJson(engine.activeScene);
                 engine.log('Saved Scene "${engine.activeScene.name}" (${jsonStr.length} chars)', source: 'Serializer');
@@ -287,8 +334,8 @@ class EditorTopBar extends StatelessWidget {
 
           const SizedBox(width: 4),
 
-          // 8. Virtual Touch Controls Toggle
-          if (onToggleVirtualJoystick != null)
+          // 8. Virtual Touch Controls Toggle (wide windows only; also in the Command Palette)
+          if (onToggleVirtualJoystick != null && MediaQuery.sizeOf(context).width >= 1400)
             Tooltip(
               message: showVirtualJoystick ? 'Hide Touch Controls' : 'Show Virtual Touch Controls',
               child: IconButton(

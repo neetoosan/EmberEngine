@@ -1,3 +1,4 @@
+import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import '../core/assets.dart';
 import '../core/engine_loop.dart';
@@ -18,6 +19,8 @@ import 'panels/hierarchy_panel.dart';
 import 'panels/inspector_panel.dart';
 import 'panels/top_bar.dart';
 import 'panels/viewport_container.dart';
+import 'history.dart';
+import 'project_session.dart';
 import 'script/script_workspace.dart';
 import 'shortcuts/editor_shortcuts.dart';
 import 'theme/ember_theme.dart';
@@ -70,17 +73,28 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
 
   final GlobalKey<ScaffoldMessengerState> _messengerKey = GlobalKey<ScaffoldMessengerState>();
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  late final AppLifecycleListener _lifecycle;
+  PlayState _lastPlayState = PlayState.stopped;
 
   @override
   void initState() {
     super.initState();
+    _lifecycle = AppLifecycleListener(onExitRequested: _onExitRequested);
+    ProjectSession.instance.addListener(_onSessionChanged);
     registerAllSubsystems();
     Input.bindHardwareKeyboard();
     _currentProject = widget.initialProject;
     _screenMode = widget.startInLauncher && widget.initialProject == null ? EditorScreenMode.launcher : EditorScreenMode.editor;
     _engine.addListener(_onEngineUpdate);
     ScriptWorkspaceController.instance.addListener(_onScriptOpenRequest);
-    if (_currentProject != null) EmberScripts.instance.loadAll(_currentProject!.scripts);
+    EditorHistory.instance.attach(_engine);
+    EditorHistory.instance.addListener(_onHistoryChanged);
+    if (_currentProject != null) {
+      EmberScripts.instance.loadAll(_currentProject!.scripts);
+      ProjectSession.instance.begin(_currentProject!, content: _currentContent);
+      final project = _currentProject!;
+      if (ProjectStorage.hasDiskLocation(project)) WidgetsBinding.instance.addPostFrameCallback((_) => _offerRecovery(project));
+    }
   }
 
   /// "Edit script" from the Inspector: jump to the Script workspace.
@@ -88,6 +102,24 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
     if (ScriptWorkspaceController.instance.pendingFile != null && _workspace != 1) {
       setState(() => _workspace = 1);
     }
+  }
+
+  void _onHistoryChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onSessionChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _undo() {
+    if (!EditorHistory.instance.undo()) return;
+    _engine.log('Undo', source: 'Editor');
+  }
+
+  void _redo() {
+    if (!EditorHistory.instance.redo()) return;
+    _engine.log('Redo', source: 'Editor');
   }
 
   void _setWorkspace(int w) {
@@ -177,12 +209,107 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
       await ProjectStorage.save(project);
       EmberAssets.instance.root = project.path;
       _rememberRecent(project);
+      await ProjectSession.instance.markSaved();
       if (!quiet) _notify('Saved "${project.name}" to ${project.path}');
     } catch (e) {
       if (!quiet) _notify('Save failed: $e', isError: true);
       _engine.log('Project not written to disk: $e', severity: LogSeverity.warning, source: 'Project');
+      return null;
     }
     return project;
+  }
+
+  /// Everything a save would write right now (for the unsaved-changes check and recovery copies).
+  Map<String, dynamic> _currentContent() {
+    final project = _currentProject!;
+    return ProjectSession.contentOf(project,
+        editingScene: _editingSceneName ?? project.defaultSceneName, editingJson: _engine.editableSceneJson);
+  }
+
+  /// Asks what to do with unsaved changes before leaving the project.
+  /// Returns true when it is fine to leave.
+  Future<bool> _confirmLeave() async {
+    final session = ProjectSession.instance;
+    if (_currentProject == null || _screenMode != EditorScreenMode.editor) return true;
+    session.refresh();
+    if (!session.isDirty) return true;
+    final ctx = _navigatorKey.currentContext;
+    if (ctx == null) return true;
+    final choice = await showDialog<String>(
+      context: ctx,
+      builder: (dctx) => AlertDialog(
+        key: const ValueKey('unsaved-dialog'),
+        backgroundColor: EmberTheme.panelBg,
+        title: const Text('Save changes?', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text('"${_currentProject!.name}" has changes that are not saved.',
+            style: const TextStyle(color: EmberTheme.textSecondary, fontSize: 13)),
+        actions: [
+          TextButton(key: const ValueKey('unsaved-cancel'), onPressed: () => Navigator.of(dctx).pop('cancel'), child: const Text('Cancel')),
+          TextButton(key: const ValueKey('unsaved-discard'), onPressed: () => Navigator.of(dctx).pop('discard'), child: const Text("Don't Save")),
+          ElevatedButton(key: const ValueKey('unsaved-save'), onPressed: () => Navigator.of(dctx).pop('save'), child: const Text('Save')),
+        ],
+      ),
+    );
+    switch (choice) {
+      case 'save':
+        return await _saveProject(quiet: true) != null;
+      case 'discard':
+        await ProjectSession.discardRecovery(_currentProject!);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  Future<void> _leaveToHub() async {
+    if (!await _confirmLeave()) return;
+    _engine.stop();
+    ProjectSession.instance.end();
+    setState(() => _screenMode = EditorScreenMode.launcher);
+  }
+
+  /// Window close button / Alt+F4 / system shutdown.
+  Future<AppExitResponse> _onExitRequested() async => await _confirmLeave() ? AppExitResponse.exit : AppExitResponse.cancel;
+
+  /// Offers to restore a recovery copy left by a session that didn't save (e.g. a crash).
+  Future<void> _offerRecovery(EmberProject project) async {
+    final copy = await ProjectSession.findRecovery(project);
+    final ctx = _navigatorKey.currentContext;
+    if (copy == null || ctx == null || !ctx.mounted || !identical(_currentProject, project)) return;
+    final t = copy.savedAt;
+    final when = '${t.year}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')} '
+        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    final restore = await showDialog<bool>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dctx) => AlertDialog(
+        key: const ValueKey('recovery-dialog'),
+        backgroundColor: EmberTheme.panelBg,
+        title: const Text('Restore unsaved work?', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text(
+          'Ember closed without saving "${project.name}". A recovery copy from $when was kept.\n\n'
+          'Restore it to continue where you left off, or discard it to open the last saved version.',
+          style: const TextStyle(color: EmberTheme.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(key: const ValueKey('recovery-discard'), onPressed: () => Navigator.of(dctx).pop(false), child: const Text('Discard')),
+          ElevatedButton(key: const ValueKey('recovery-restore'), onPressed: () => Navigator.of(dctx).pop(true), child: const Text('Restore')),
+        ],
+      ),
+    );
+    if (!mounted || !identical(_currentProject, project)) return;
+    if (restore != true) {
+      await ProjectSession.discardRecovery(project);
+      return;
+    }
+    ProjectSession.applyContent(project, copy.content);
+    EmberScripts.instance.loadAll(project.scripts);
+    final name = project.scenes.containsKey(_editingSceneName) ? _editingSceneName! : project.defaultSceneName;
+    setState(() => _editingSceneName = name);
+    _engine.loadScene(EmberScene.fromJson(project.scenes[name]!.toJson()));
+    EditorHistory.instance.clear();
+    ProjectSession.instance.markRecovered();
+    _notify('Restored unsaved work from $when — save to keep it');
   }
 
   void _rememberRecent(EmberProject project) {
@@ -201,12 +328,21 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
 
   @override
   void dispose() {
+    _lifecycle.dispose();
+    ProjectSession.instance.removeListener(_onSessionChanged);
+    ProjectSession.instance.end();
     _engine.removeListener(_onEngineUpdate);
     ScriptWorkspaceController.instance.removeListener(_onScriptOpenRequest);
+    EditorHistory.instance.removeListener(_onHistoryChanged);
+    EditorHistory.instance.detach();
     super.dispose();
   }
 
   void _onEngineUpdate() {
+    // Pressing Play is a good moment for a recovery copy (scripts may misbehave)
+    final state = _engine.playState;
+    if (_lastPlayState == PlayState.stopped && state != PlayState.stopped) ProjectSession.instance.writeRecovery();
+    _lastPlayState = state;
     if (mounted) setState(() {});
   }
 
@@ -370,12 +506,15 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
       _engine.preserveSceneOnModeSwitch = false;
       _engine.setMode(targetMode);
       _engine.loadScene(project.activeScene);
+      EditorHistory.instance.clear(); // steps from another project must not apply here
       _engine.preserveSceneOnModeSwitch = true;
       _screenMode = EditorScreenMode.editor;
     });
+    ProjectSession.instance.begin(project, content: _currentContent);
 
     if (ProjectStorage.hasDiskLocation(project)) {
       _rememberRecent(project);
+      _offerRecovery(project);
     } else {
       // Brand-new project: give it a folder on disk right away (in the background).
       _saveProject(quiet: true).then((p) {
@@ -396,6 +535,10 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
         onToggleInspector: () => setState(() => _showInspector = !_showInspector),
         onToggleBottomDrawer: () => setState(() => _isBottomDrawerExpanded = !_isBottomDrawerExpanded),
         onToggleZenMode: _toggleZenMode,
+        onToggleTouchControls: () => setState(() => _showVirtualJoystick = !_showVirtualJoystick),
+        onUndo: _undo,
+        onRedo: _redo,
+        onSwitchWorkspace: _setWorkspace,
       ),
     );
   }
@@ -437,6 +580,8 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
               onToggleZenMode: _toggleZenMode,
               onSave: _saveProject,
               onSwitchWorkspace: _setWorkspace,
+              onUndo: _undo,
+              onRedo: _redo,
               child: child!,
             )
           : child!,
@@ -458,14 +603,32 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
                   onToggleZenMode: _toggleZenMode,
                   onToggleVirtualJoystick: () => setState(() => _showVirtualJoystick = !_showVirtualJoystick),
                   showVirtualJoystick: _showVirtualJoystick,
-                  onOpenProjectHub: () => setState(() => _screenMode = EditorScreenMode.launcher),
-                  onOpenDoctor: () => EmberDoctorDialog.show(appContext, project: _currentProject),
+                  onOpenProjectHub: _leaveToHub,
+                  hasUnsavedChanges: ProjectSession.instance.isDirty,
+                  onOpenDoctor: () => EmberDoctorDialog.show(
+                    appContext,
+                    project: _currentProject,
+                    content: _currentProject == null ? null : _currentContent,
+                    hasUnsavedChanges: () {
+                      ProjectSession.instance.refresh();
+                      return ProjectSession.instance.isDirty;
+                    },
+                    onOpenScript: (file) {
+                      _setWorkspace(1);
+                      ScriptWorkspaceController.instance.open(file);
+                    },
+                    onSave: () async => _saveProject(),
+                  ),
                   onSaveScene: _saveProject,
                   onExportGame: ProjectStorage.isSupported
                       ? () => ExportGameDialog.show(appContext, prepareProject: _saveProject)
                       : null,
                   sceneSelector: _buildSceneMenu(appContext),
                   workspaceSwitch: _workspaceSwitch(appContext),
+                  onUndo: _undo,
+                  onRedo: _redo,
+                  canUndo: EditorHistory.instance.canUndo,
+                  canRedo: EditorHistory.instance.canRedo,
                 ),
 
                 // 2. Middle: Scene workspace (Hierarchy + Viewport + Inspector) or the

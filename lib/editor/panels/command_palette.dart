@@ -20,6 +20,7 @@ import '../../subsystems/physics/character_controller3d.dart';
 import '../../subsystems/physics/character_controller2d.dart';
 import '../../subsystems/particles/particle_system.dart';
 import '../theme/ember_theme.dart';
+import 'about_panel.dart';
 
 /// Single executable command in the spotlight palette.
 class PaletteCommand {
@@ -48,6 +49,10 @@ class CommandPaletteDialog extends StatefulWidget {
   final VoidCallback onToggleInspector;
   final VoidCallback onToggleBottomDrawer;
   final VoidCallback onToggleZenMode;
+  final VoidCallback? onToggleTouchControls;
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
+  final void Function(int workspace)? onSwitchWorkspace;
 
   const CommandPaletteDialog({
     super.key,
@@ -56,6 +61,10 @@ class CommandPaletteDialog extends StatefulWidget {
     required this.onToggleInspector,
     required this.onToggleBottomDrawer,
     required this.onToggleZenMode,
+    this.onToggleTouchControls,
+    this.onUndo,
+    this.onRedo,
+    this.onSwitchWorkspace,
   });
 
   @override
@@ -71,6 +80,8 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
   @override
   void initState() {
     super.initState();
+    // Commands run after the palette closes, so dialogs open from the navigator's context
+    _hostContext = Navigator.of(context).context;
     _buildCommandsList();
     _focusNode.requestFocus();
   }
@@ -82,8 +93,16 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
     super.dispose();
   }
 
+  late final BuildContext _hostContext;
+
   void _buildCommandsList() {
     _allCommands = [
+      PaletteCommand(
+        title: 'About Ember Engine (version, licences, logs)',
+        category: 'Help',
+        icon: Icons.info_outline_rounded,
+        onExecute: () => AboutEmberDialog.show(_hostContext),
+      ),
       // Mode Switching
       PaletteCommand(
         title: 'Switch to 2D Mode (Flame)',
@@ -379,6 +398,33 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
         shortcut: 'Tab',
         onExecute: widget.onToggleZenMode,
       ),
+      if (widget.onToggleTouchControls != null)
+        PaletteCommand(
+          title: 'Toggle Virtual Touch Controls',
+          category: 'Panels',
+          icon: Icons.sports_esports_outlined,
+          onExecute: widget.onToggleTouchControls!,
+        ),
+      if (widget.onUndo != null)
+        PaletteCommand(title: 'Undo', category: 'Edit', icon: Icons.undo, shortcut: 'Ctrl+Z', onExecute: widget.onUndo!),
+      if (widget.onRedo != null)
+        PaletteCommand(title: 'Redo', category: 'Edit', icon: Icons.redo, shortcut: 'Ctrl+Y', onExecute: widget.onRedo!),
+      if (widget.onSwitchWorkspace != null) ...[
+        PaletteCommand(
+          title: 'Scene Workspace',
+          category: 'Panels',
+          icon: Icons.view_in_ar_outlined,
+          shortcut: 'Ctrl+1',
+          onExecute: () => widget.onSwitchWorkspace!(0),
+        ),
+        PaletteCommand(
+          title: 'Script Workspace (Ember Script)',
+          category: 'Panels',
+          icon: Icons.code,
+          shortcut: 'Ctrl+2',
+          onExecute: () => widget.onSwitchWorkspace!(1),
+        ),
+      ],
     ];
   }
 

@@ -16,8 +16,10 @@ import '../../subsystems/audio/audio_component.dart';
 import '../../subsystems/audio/audio_system.dart';
 import '../../subsystems/physics/character_controller3d.dart';
 import '../../subsystems/physics/character_controller2d.dart';
+import '../../subsystems/physics/rigid_body2d.dart';
 import '../../subsystems/particles/particle_system.dart';
 import '../../subsystems/two_d/camera2d.dart';
+import '../../subsystems/two_d/line2d.dart';
 import '../../subsystems/two_d/parallax.dart';
 import '../../subsystems/two_d/sprite_animator.dart';
 import '../../scripting/script_library.dart';
@@ -1425,6 +1427,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
     final ember = EmberScripts.instance.names;
     final builtIn = ScriptRegistry.builtInScripts..sort();
     final all = [...ember, ...builtIn];
+    // An older project may still use a retired (hidden) script: keep it selectable
+    if (script.scriptName.isNotEmpty && !all.contains(script.scriptName) && script.scriptInstance != null) {
+      builtIn.add(script.scriptName);
+      all.add(script.scriptName);
+    }
     final isEmber = EmberScripts.isScriptFile(script.scriptName);
     final instance = script.scriptInstance;
     final problem = isEmber ? EmberScripts.instance.compileError(script.scriptName) : null;
@@ -1624,6 +1631,19 @@ class _InspectorPanelState extends State<InspectorPanel> {
           case 'Door':
             entity.addComponent(DoorComponent());
             break;
+          case 'RigidBody2D':
+            entity.addComponent(RigidBody2DComponent());
+            break;
+          case 'Joint2D':
+            if (!entity.hasComponent<RigidBody2DComponent>()) entity.addComponent(RigidBody2DComponent());
+            entity.addComponent(PhysicsJoint2DComponent());
+            break;
+          case 'PhysicsWorld2D':
+            entity.addComponent(PhysicsWorld2DComponent());
+            break;
+          case 'Line2D':
+            entity.addComponent(Line2DComponent());
+            break;
         }
         setState(() {});
       },
@@ -1647,6 +1667,12 @@ class _InspectorPanelState extends State<InspectorPanel> {
         PopupMenuItem(value: 'UIText', child: Text('UI Text (on-screen)', style: TextStyle(fontSize: 11))),
         PopupMenuItem(value: 'SpriteAnimator', child: Text('Sprite Animator', style: TextStyle(fontSize: 11))),
         PopupMenuItem(value: 'Parallax', child: Text('Parallax Layer', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'Line2D', child: Text('Line 2D (ropes, aim lines)', style: TextStyle(fontSize: 11))),
+        PopupMenuDivider(height: 1),
+        PopupMenuItem(enabled: false, child: Text('--- 2D Physics ---', style: TextStyle(fontSize: 10, color: EmberTheme.textMuted))),
+        PopupMenuItem(value: 'RigidBody2D', child: Text('Rigid Body 2D', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'Joint2D', child: Text('Joint 2D (hinge, rope, spring)', style: TextStyle(fontSize: 11))),
+        PopupMenuItem(value: 'PhysicsWorld2D', child: Text('Physics World 2D (gravity)', style: TextStyle(fontSize: 11))),
         PopupMenuDivider(height: 1),
         PopupMenuItem(enabled: false, child: Text('--- Top-Down / RPG ---', style: TextStyle(fontSize: 10, color: EmberTheme.textMuted))),
         PopupMenuItem(value: 'TopDown', child: Text('Top-Down Controller 2D', style: TextStyle(fontSize: 11))),

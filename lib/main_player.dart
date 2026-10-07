@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'core/assets.dart';
+import 'core/crash_reporter.dart';
 import 'core/engine_loop.dart';
 import 'core/save_data.dart';
 import 'core/event_bus.dart';
@@ -24,13 +26,35 @@ import 'subsystems/audio/audio_output.dart';
 ///  1. the path given as the first command-line argument,
 ///  2. `game.emberpkg.json` next to the executable (what "Export Game" writes),
 ///  3. otherwise the built-in demo scene.
-void main(List<String> args) {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // A script or asset problem must never close the player's game
+  await CrashReporter.install(appName: 'game');
   registerAllSubsystems();
   registerGameScripts();
   // Real audio output is attached here (not in the widget) so widget tests stay silent
   AudioOutput.instance.attach();
-  runApp(EmberPlayerApp(project: _loadGame(args)));
+  runApp(EmberPlayerApp(project: _loadGame(args) ?? await loadBundledGame()));
+}
+
+/// Where web and Android exports put the game inside the player's bundle.
+const String bundledGameKey = 'assets/game/${GameExporter.gameFileName}';
+
+/// The game packed into the player's own bundle (web / Android exports), with
+/// its images and sounds embedded. Null when there is none.
+Future<EmberProject?> loadBundledGame() async {
+  try {
+    final data = await rootBundle.load(bundledGameKey);
+    final text = utf8.decode(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+    final (project, files) = ProjectPackageManager.importWithFiles(text);
+    EmberAssets.instance.root = null;
+    EmberAssets.instance.embedded
+      ..clear()
+      ..addAll(files);
+    return project;
+  } catch (_) {
+    return null; // no bundled game: show the built-in demo
+  }
 }
 
 EmberProject? _loadGame(List<String> args) {
@@ -43,9 +67,12 @@ EmberProject? _loadGame(List<String> args) {
     final file = File(path);
     if (!file.existsSync()) continue;
     try {
-      final project = ProjectPackageManager.importFromPackageString(file.readAsStringSync());
-      // Images and other files are exported next to the game file.
+      final (project, files) = ProjectPackageManager.importWithFiles(file.readAsStringSync());
+      // Images and other files are exported next to the game file (or embedded in it).
       EmberAssets.instance.root = file.parent.path;
+      EmberAssets.instance.embedded
+        ..clear()
+        ..addAll(files);
       return project;
     } catch (e) {
       debugPrint('Ember Player: could not load $path: $e');

@@ -669,13 +669,13 @@ class LegendsTitle extends GameScript {
 }
 
 void registerLegendsScripts() {
-  ScriptRegistry.register('Legends Hero', () => LegendsHero());
-  ScriptRegistry.register('Legends Monster', () => LegendsMonster());
-  ScriptRegistry.register('Legends Boss', () => LegendsBoss());
-  ScriptRegistry.register('Legends Elder', () => LegendsElder());
-  ScriptRegistry.register('Legends Merchant', () => LegendsMerchant());
-  ScriptRegistry.register('Legends Crystal', () => LegendsCrystal());
-  ScriptRegistry.register('Legends Title', () => LegendsTitle());
+  ScriptRegistry.register('Legends Hero', () => LegendsHero(), hidden: true);
+  ScriptRegistry.register('Legends Monster', () => LegendsMonster(), hidden: true);
+  ScriptRegistry.register('Legends Boss', () => LegendsBoss(), hidden: true);
+  ScriptRegistry.register('Legends Elder', () => LegendsElder(), hidden: true);
+  ScriptRegistry.register('Legends Merchant', () => LegendsMerchant(), hidden: true);
+  ScriptRegistry.register('Legends Crystal', () => LegendsCrystal(), hidden: true);
+  ScriptRegistry.register('Legends Title', () => LegendsTitle(), hidden: true);
 }
 
 // ---------------------------------------------------------------------------
@@ -799,9 +799,9 @@ class LegendsLevelBuilder {
         case '@' when withHero:
           scene.addEntity(hero(at));
         case 'E' when withNpcs:
-          scene.addEntity(_npc('Elder', 'elder.png', at)..addComponent(ScriptComponent(scriptName: 'Legends Elder')));
+          scene.addEntity(_npc('Elder', 'elder.png', at)..addComponent(ScriptComponent(scriptName: 'legends_elder.ember')));
         case 'M' when withNpcs:
-          scene.addEntity(_npc('Merchant', 'merchant.png', at)..addComponent(ScriptComponent(scriptName: 'Legends Merchant')));
+          scene.addEntity(_npc('Merchant', 'merchant.png', at)..addComponent(ScriptComponent(scriptName: 'legends_merchant.ember')));
         case 'N' when withNpcs:
           scene.addEntity(_npc('Villager', 'merchant.png', at)
             ..addComponent(DialogueComponent(
@@ -813,7 +813,7 @@ class LegendsLevelBuilder {
             ..addComponent(Transform2DComponent(position: at, size: vm.Vector2(32, 32), anchor: EmberAnchor.center, zIndex: 2))
             ..addComponent(FlameSpriteComponent(assetPath: '${Legends.art}/crystal.png', columns: 2))
             ..addComponent(SpriteAnimatorComponent(clips: 'idle=0-1@2'))
-            ..addComponent(ScriptComponent(scriptName: 'Legends Crystal')));
+            ..addComponent(ScriptComponent(scriptName: 'legends_crystal.ember')));
         case 's' || 'v' || 'k' || 'G':
           scene.addEntity(monster(ch, at, numbered(_monsterName(ch))));
         case '\$':
@@ -833,6 +833,7 @@ class LegendsLevelBuilder {
     }
 
     if (withHud) _addHud(scene, boss: things.any((t) => t.$1 == 'G'));
+    if (withHero) _addTemplates(scene);
     return scene;
   }
 
@@ -861,7 +862,7 @@ class LegendsLevelBuilder {
     ..addComponent(FlameHitbox2DComponent(size: vm.Vector2(18, 18), offset: vm.Vector2(7, 13), isSolid: false, debugDraw: false))
     ..addComponent(TopDownController2DComponent(moveSpeed: 125, acceleration: 16))
     ..addComponent(HealthComponent(maxHealth: 5, team: 'player', invulnerableTime: 1.0, destroyOnDeath: false))
-    ..addComponent(ScriptComponent(scriptName: 'Legends Hero'));
+    ..addComponent(ScriptComponent(scriptName: 'legends_hero.ember'));
 
   static EmberEntity monster(String kind, vm.Vector2 at, String name) {
     final boss = kind == 'G';
@@ -897,7 +898,7 @@ class LegendsLevelBuilder {
       ..addComponent(TopDownController2DComponent(moveSpeed: speed, acceleration: 10))
       ..addComponent(HealthComponent(maxHealth: hp, team: 'monster', invulnerableTime: boss ? 0.15 : 0.25))
       ..addComponent(ai)
-      ..addComponent(ScriptComponent(scriptName: boss ? 'Legends Boss' : 'Legends Monster'));
+      ..addComponent(ScriptComponent(scriptName: boss ? 'legends_boss.ember' : 'legends_monster.ember'));
   }
 
   static EmberEntity _npc(String name, String asset, vm.Vector2 at) => EmberEntity(name: name, tags: {'npc'})
@@ -917,6 +918,32 @@ class LegendsLevelBuilder {
       ..addComponent(FlameHitbox2DComponent(size: vm.Vector2(18, 18), offset: vm.Vector2(1, 1), isSolid: false, debugDraw: false));
     if (kind == 'gold') e.addComponent(SpriteAnimatorComponent(clips: 'spin=0-3@8', defaultClip: 'spin'));
     return e;
+  }
+
+  /// Things scripts spawn (loot, sword slash, puffs): disabled templates
+  /// parked off-screen, copied with spawn("Gold Template", position).
+  static void _addTemplates(EmberScene scene) {
+    final park = vm.Vector2(-5000, -5000);
+    for (final kind in ['gold', 'heart', 'potion']) {
+      final template = _pickupEntity(kind, park, '${kind[0].toUpperCase()}${kind.substring(1)} Template')..enabled = false;
+      scene.addEntity(template);
+    }
+    scene.addEntity(EmberEntity(name: 'Slash Template', enabled: false)
+      ..addComponent(Transform2DComponent(position: park, size: vm.Vector2(30, 30), anchor: EmberAnchor.center, zIndex: 7))
+      ..addComponent(FlameSpriteComponent(assetPath: '${Legends.art}/slash.png')));
+    scene.addEntity(EmberEntity(name: 'Puff Template', enabled: false)
+      ..addComponent(Transform2DComponent(position: park, size: vm.Vector2.zero(), zIndex: 8))
+      ..addComponent(ParticleEmitter2DComponent(
+        preset: ParticlePreset.sparkBurst,
+        spawnRate: 0,
+        startColor: const Color(0xFFFFFFFF),
+        endColor: const Color(0x00F97316),
+        startSize: 5,
+        endSize: 1,
+        speed: 110,
+        gravity: 0,
+      ))
+      ..addComponent(ScriptComponent(scriptName: 'legends_effect.ember')));
   }
 
   static void _addHud(EmberScene scene, {required bool boss}) {
@@ -1091,7 +1118,7 @@ EmberScene buildLegendsTitle() {
     map[r] = map[r].replaceRange(c, c + 1, 's');
   }
   final scene = LegendsLevelBuilder(Legends.title, map).build(withHero: false, withHud: false, withNpcs: true);
-  scene.addEntity(EmberEntity(name: 'Title Menu')..addComponent(ScriptComponent(scriptName: 'Legends Title')));
+  scene.addEntity(EmberEntity(name: 'Title Menu')..addComponent(ScriptComponent(scriptName: 'legends_title.ember')));
   scene.addEntity(EmberEntity(name: 'Title Text')
     ..addComponent(UITextComponent(text: 'EMBER LEGENDS', fontSize: 46, anchor: EmberAnchor.center, offset: vm.Vector2(0, -95), color: const Color(0xFFFBBF24))));
   scene.addEntity(EmberEntity(name: 'Subtitle')

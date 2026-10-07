@@ -106,6 +106,14 @@ class Transform2DComponent extends EmberComponent {
     notifyListeners();
   }
 
+  /// Sets position and rotation together with a single change notification
+  /// (physics writes every moving body each step).
+  void setPose(Vector2 position, double radians) {
+    _position = position;
+    _rotation = radians;
+    notifyListeners();
+  }
+
   Vector2 get scale => _scale;
   set scale(Vector2 val) {
     _scale = val;

@@ -37,13 +37,14 @@ void main() {
     expect(loaded.name, 'My Platformer');
     expect(loaded.renderPipeline, RenderPipelineMode.twoD);
     expect(loaded.path, project.path);
-    expect(loaded.scripts.keys, contains('player_controller_2d.dart'));
+    expect(loaded.scripts.keys, contains('player.ember'));
+    expect(loaded.scripts['player.ember'], project.scripts['player.ember']);
 
     final scene = loaded.activeScene;
-    expect(scene.findByName('HeroPlayer'), isNotNull);
-    expect(scene.findByName('World2D'), isNotNull);
-    final script = scene.findByName('HeroPlayer')!.getComponent<ScriptComponent>();
-    expect(script?.scriptName, 'Platformer 2D Controller');
+    expect(scene.findByName('Hero'), isNotNull);
+    expect(scene.findByName('Level'), isNotNull);
+    final script = scene.findByName('Hero')!.getComponent<ScriptComponent>();
+    expect(script?.scriptName, 'player.ember');
   });
 
   test('saving twice overwrites files in place', () async {
@@ -51,7 +52,7 @@ void main() {
     project.path = await ProjectStorage.allocateProjectPath(project.name, root: tmp);
     await ProjectStorage.save(project);
 
-    project.activeScene.findByName('HeroPlayer')!.name = 'Renamed Hero';
+    project.activeScene.findByName('Hero')!.name = 'Renamed Hero';
     await ProjectStorage.save(project);
 
     final loaded = await ProjectStorage.load(project.path);
@@ -92,7 +93,7 @@ void main() {
     final pkg = File('${gameDir.path}/${GameExporter.gameFileName}').readAsStringSync();
     final reloaded = ProjectPackageManager.importFromPackageString(pkg);
     expect(reloaded.name, 'Coin Quest');
-    expect(reloaded.activeScene.findByName('HeroPlayer'), isNotNull);
+    expect(reloaded.activeScene.findByName('Hero'), isNotNull);
   });
 
   test('recent projects persist to disk once storage is attached', () async {

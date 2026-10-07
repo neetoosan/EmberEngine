@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' hide Colors;
 
@@ -87,6 +88,42 @@ class Mesh3D {
   }) {
     this.bounds = bounds ?? AABB3D.fromVertices(vertices);
   }
+
+  /// x, y, z per vertex — flat arrays the renderer streams through every frame.
+  late final Float64List positionData = Float64List.fromList([
+    for (final v in vertices) ...[v.position.x, v.position.y, v.position.z],
+  ]);
+
+  /// Unit normal per vertex (x, y, z).
+  late final Float64List normalData = Float64List.fromList([
+    for (final v in vertices) ...() {
+      final n = v.normal.length2 > 0 ? v.normal.normalized() : Vector3(0, 1, 0);
+      return [n.x, n.y, n.z];
+    }(),
+  ]);
+
+  /// a, b, c per triangle.
+  late final Int32List indexData = Int32List.fromList([
+    for (final t in triangles) ...[t.a, t.b, t.c],
+  ]);
+
+  /// True when every vertex normal agrees with the faces using it (spheres,
+  /// cylinders, cubes with split corners): lighting can be done per vertex
+  /// and blended across triangles. Otherwise (e.g. a pyramid whose apex is
+  /// shared by 4 faces) each triangle is lit flat with its own face normal.
+  late final bool smoothShading = () {
+    for (final t in triangles) {
+      final p0 = vertices[t.a].position, p1 = vertices[t.b].position, p2 = vertices[t.c].position;
+      final face = (p1 - p0).cross(p2 - p0);
+      if (face.length2 == 0) continue;
+      face.normalize();
+      for (final i in [t.a, t.b, t.c]) {
+        final n = vertices[i].normal;
+        if (n.length2 == 0 || n.normalized().dot(face) < 0.5) return false;
+      }
+    }
+    return true;
+  }();
 
   /// Calculates face normals for triangles without precomputed normals.
   void computeFaceNormals() {

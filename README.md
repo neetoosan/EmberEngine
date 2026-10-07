@@ -25,21 +25,42 @@ The **Project Hub** opens first. Pick a starter template:
 
 | Template | What you get when you press Play |
 |---|---|
+| Ember Siege | An Angry Birds-style physics game: drag back the slingshot, fling embers, heavy coal and splitting sparks at wood, ice and stone castles that tip, crack and shatter; powder kegs, frost imps, 3 levels, stars, unlocks, best scores, music |
 | Ember Legends | A top-down monster-slaying RPG: title screen, village with NPCs, field and dungeon, sword combat, slimes/bats/skeleton archers, the Ember Golem boss, XP & levels, gold, potions, save & continue, music |
 | Ember Quest | A Mario-style platformer: 2 levels, stomp slimes, "?" blocks, bricks, power berry, spikes, pits, lives, score, music |
 | Flappy Arcade | A complete Flappy Bird-style game: flap between random pipes, score, best score, restart |
-| 3D FPS Arena | First-person movement, mouse-look, shooting a target bot |
-| 2D Platformer Adventure | Tile platforms, jumping, collectable coins |
-| Procedural Particle Playground | Live 2D/3D particle emitters |
+| 3D FPS Arena | First-person movement and mouse-look; shoot a strafing target bot (hit counter in Ember Script) |
+| 2D Platformer Adventure | One short level to learn from: run, jump a pit, collect 12 coins (three small Ember Scripts) |
+| Procedural Particle Playground | 3D fire and spark emitters; Space or click fires bursts |
 | Blank Canvas | Camera + light (3D) or an empty 2D world |
 
 New projects are saved to `Documents/EmberProjects/<Project Name>/`.
+
+### Your work is safe
+
+- An orange dot on the save button means there are unsaved changes. Going back
+  to the Hub or closing the window asks **Save / Don't Save / Cancel**.
+- While you work, a recovery copy is written every minute (and when you press
+  Play) to `<project>/.recovery/`. If Ember closes unexpectedly, opening the
+  project offers to restore it. Saving removes the copy.
+- Errors never close the editor or an exported game; a panel that fails shows a
+  short message instead. Details go to a daily log
+  (`%APPDATA%/Ember Engine/Ember Engine/logs`).
+- **Ember Doctor** (shield icon) checks the project for real: scripts compile,
+  Script Components point to existing scripts, buttons/doors/`loadLevel()` lead
+  to existing scenes, every image and sound exists, and what each export needs is
+  installed. Problems come with an *Open script* / *Save now* button.
+- **About** (`Ctrl+K` → About, or the Hub's About tab): version, what's
+  included, open-source licences, the log folder and a *Copy problem report*
+  button (version, system and recent errors, never your project files).
 
 ### Editor controls
 
 | Keys | Action |
 |---|---|
 | `Ctrl+S` | Save project |
+| `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / redo any scene edit (also the arrows in the top bar) |
+| `Ctrl+1` / `Ctrl+2` | Scene / Script workspace |
 | `Ctrl+P` | Play / pause |
 | `Esc` | Stop and restore the scene to how it was before Play |
 | `Ctrl+K` | Command palette |
@@ -54,6 +75,9 @@ While the game runs, keys go to the game:
 - **2D platformer / Ember Quest**: `A`/`D` or arrows move; `Space`, `W` or `Up`
   jump (hold for higher); `Shift` run. Land on slimes to squash them, hit
   "?" blocks from below, eat the berry to grow (big heroes break bricks).
+- **Ember Siege**: drag the shot back from the slingshot and let go (mouse or
+  touch); tap again in flight for its power (sparks split in three, coal slams
+  down). Keyboard: arrows aim, `Space` fires, `R` retries.
 - **Ember Legends**: `WASD`/arrows move; `Space`, `J` or click swings the sword;
   `E` talks (Elder, Merchant, save crystal); `Q` drinks a potion; `Esc` pauses
   (Resume / Save Game / Quit to Title).
@@ -114,6 +138,12 @@ void onTriggerEnter(other) {
   stopped. `print(...)` goes to **Output** and the Console.
 - Edits to a script apply to the running game as soon as they are valid,
   keeping its variables' values.
+- The **Ember Siege, Ember Legends, Ember Quest and Flappy Arcade** templates are written in
+  Ember Script: open the Script workspace in a project made from one to read and
+  change the hero, monsters, boss, pipes and so on. Their scenes show the prefab
+  pattern: hidden "… Template" entities (loot, pipes, sword slash) copied with
+  `spawn("Gold Template", position)`. `Game.data` keeps lives, score or
+  inventory across levels.
 
 ### Compiled scripts (Dart)
 
@@ -162,6 +192,30 @@ class Enemy extends GameScript {
   `idle=0-1@3; run=2-4@12; jump=5; die=6@1!` (`!` = play once). Scripts call
   `animator.play('run')`; the Platformer 2D Controller does this automatically.
 - **Parallax Layer:** backgrounds that scroll slower than the camera and repeat sideways.
+
+## 2D physics (Rigid Body 2D)
+
+Real rigid-body physics (Box2D, via the pure-Dart `forge2d` package, so it runs
+on Windows, Android and web). `lib/templates/siege_game.dart` is a complete
+worked example.
+
+- **Rigid Body 2D:** dynamic (falls, tumbles, stacks), static or kinematic; box
+  or circle fitted to the entity's box; density, friction, bounciness, damping,
+  gravity scale, fixed rotation, *Fast Moving* (no tunnelling for projectiles),
+  *Sensor* (touch events only) and *Start Asleep* (a tower stays perfectly still
+  until something hits it). Orange/grey/blue outlines show colliders in the editor.
+- **Painted ground collides:** solid tiles of any Tile Map are colliders for
+  rigid bodies, updated when you repaint or a script removes a tile.
+- **Joint 2D:** hinge (with optional motor), weld, rope and spring to another
+  body or to a fixed point; a *Break Force* makes it snap (`onJointBreak`).
+- **Physics World 2D:** gravity and scale for the scene (optional).
+- **Scripts:** `onHit(other, impulse, speed)` for impacts (use the impulse for
+  damage; resting contacts never count), `self.rigidbody.velocity`,
+  `applyImpulse(v)`, `angularVelocity`, `mass`, `sleeping`;
+  `Physics.raycast(a, b)`, `Physics.entitiesAt(p)`,
+  `Physics.explode(center, radius, strength)`, `Physics.settled`, `Physics.gravity`.
+- Also new for 2D: **Line 2D** (bands, ropes, dotted aim lines), camera **Zoom**
+  and `camera.shake(amount, seconds)`, and `Input.mouseReleased` for drag-and-release.
 
 ## Top-down games and RPGs
 
@@ -239,12 +293,10 @@ flutter test
 
 ## Current limitations
 
-- Rendering is a CPU software rasterizer on a Flutter `Canvas` (painter's
-  algorithm). It suits low-poly scenes, not large detailed worlds.
-- Sprites and meshes are procedural primitives; image/glTF asset import is
-  not implemented yet.
-- Physics is box-based (AABB colliders); there is no rotated-box or mesh
-  collision.
+- 3D is basic: primitive meshes drawn by a CPU rasterizer on a Flutter `Canvas`,
+  depth-sorted (no depth buffer, no shadows). It suits small low-poly scenes.
+- No 3D model (glTF/OBJ) import yet; 2D images and sounds can be imported.
+- Export targets are Windows, web and Android (debug-signed APK); macOS, Linux
+  and iOS export are not available yet.
+- No gamepad input yet.
 - Mouse-look uses cursor movement over the viewport (no OS pointer lock).
-- Export is automated for desktop builds; mobile/web need a manual
-  `flutter build` with `-t lib/main_player.dart`.

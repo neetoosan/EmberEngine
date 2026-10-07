@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Game package staged by Android export (lib/editor/hub/game_exporter.dart)
+/assets/game/game.emberpkg.json
