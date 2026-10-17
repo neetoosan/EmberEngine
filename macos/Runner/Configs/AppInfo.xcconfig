@@ -11,4 +11,4 @@ PRODUCT_NAME = ember_engine
 PRODUCT_BUNDLE_IDENTIFIER = com.emberengine.emberEngine
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.emberengine. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 Neetoosan Studio. All rights reserved.

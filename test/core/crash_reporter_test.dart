@@ -57,4 +57,11 @@ void main() {
     final line = RegExp(r'^version:\s*(\S+)', multiLine: true).firstMatch(pubspec)!.group(1);
     expect(line, EmberVersion.full);
   });
+
+  test('the publisher in the Windows and macOS app info matches the constant', () {
+    final rc = File('windows/runner/Runner.rc').readAsStringSync();
+    expect(rc, contains('"CompanyName", "${EmberVersion.publisher}"'));
+    expect(rc, contains('Copyright (C) 2026 ${EmberVersion.publisher}.'));
+    expect(File('macos/Runner/Configs/AppInfo.xcconfig').readAsStringSync(), contains(EmberVersion.copyright));
+  });
 }

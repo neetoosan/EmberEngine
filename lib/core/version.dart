@@ -5,6 +5,10 @@ class EmberVersion {
   EmberVersion._();
 
   static const String productName = 'Ember Engine';
+  /// Who makes Ember. Keep it equal to CompanyName/LegalCopyright in
+  /// windows/runner/Runner.rc and PRODUCT_COPYRIGHT in macos AppInfo.xcconfig.
+  static const String publisher = 'Neetoosan Studio';
+  static const String copyright = 'Copyright © 2026 $publisher. All rights reserved.';
   static const String version = '1.0.0';
   static const int build = 1;
 
