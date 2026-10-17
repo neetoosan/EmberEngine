@@ -14,6 +14,76 @@ enum RenderPipelineMode {
   const RenderPipelineMode(this.label, this.shortCode);
 }
 
+/// How the exported game presents itself: name, icon, publisher, version
+/// number for stores. Empty fields fall back to the project's own values.
+class GameSettings {
+  /// Name shown to players (window title, app name, browser tab). Empty: the project name.
+  String displayName;
+
+  /// Who makes the game (shown in Windows file properties and installers). Empty: the author.
+  String publisher;
+
+  /// Increases with every release a store sees (Android version code). At least 1.
+  int buildNumber;
+
+  /// Android application id, e.g. com.mystudio.mygame. Empty: made from the name.
+  String appId;
+
+  /// Project-relative square PNG (e.g. assets/icon/icon.png). Empty: the Ember icon.
+  String iconPath;
+
+  /// MSIX package name (Partner Center: Package/Identity/Name). Empty: made from the app id.
+  String msixName;
+
+  /// MSIX publisher (Partner Center: Package/Identity/Publisher, e.g. CN=1A2B...). Empty: `CN=<publisher>`.
+  String msixPublisher;
+
+  GameSettings({
+    this.displayName = '',
+    this.publisher = '',
+    this.buildNumber = 1,
+    this.appId = '',
+    this.iconPath = '',
+    this.msixName = '',
+    this.msixPublisher = '',
+  });
+
+  Map<String, dynamic> toJson() => {
+        if (displayName.isNotEmpty) 'displayName': displayName,
+        if (publisher.isNotEmpty) 'publisher': publisher,
+        'buildNumber': buildNumber,
+        if (appId.isNotEmpty) 'appId': appId,
+        if (iconPath.isNotEmpty) 'iconPath': iconPath,
+        if (msixName.isNotEmpty) 'msixName': msixName,
+        if (msixPublisher.isNotEmpty) 'msixPublisher': msixPublisher,
+      };
+
+  factory GameSettings.fromJson(Object? json) {
+    if (json is! Map) return GameSettings();
+    return GameSettings(
+      displayName: json['displayName'] as String? ?? '',
+      publisher: json['publisher'] as String? ?? '',
+      buildNumber: ((json['buildNumber'] as num?)?.toInt() ?? 1).clamp(1, 2100000000),
+      appId: json['appId'] as String? ?? '',
+      iconPath: json['iconPath'] as String? ?? '',
+      msixName: json['msixName'] as String? ?? '',
+      msixPublisher: json['msixPublisher'] as String? ?? '',
+    );
+  }
+
+  /// A valid Android application id: two or more dot-separated parts of letters, digits and _ (each starting with a letter).
+  static bool isValidAppId(String id) => RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$').hasMatch(id);
+
+  /// An MSIX package name: 3 to 50 letters, digits, dots and dashes.
+  static bool isValidMsixName(String name) => RegExp(r'^[A-Za-z0-9.\-]{3,50}$').hasMatch(name) && !name.endsWith('.');
+
+  /// An MSIX publisher: a certificate subject such as CN=My Studio or CN=1A2B3C4D-....
+  static bool isValidMsixPublisher(String p) => RegExp(r'^CN=[^,=]+(,\s*[A-Z]+=[^,=]+)*$').hasMatch(p.trim());
+
+  /// A version like 1.0.0 (one to three numbers).
+  static bool isValidVersion(String v) => RegExp(r'^\d{1,5}(\.\d{1,5}){0,2}$').hasMatch(v);
+}
+
 /// Metadata model representing an Ember Project.
 class EmberProject {
   final String id;
@@ -35,6 +105,15 @@ class EmberProject {
 
   /// Custom project asset metadata or paths.
   final List<String> assets = [];
+
+  /// How the exported game presents itself (name, icon, publisher, store version).
+  GameSettings game = GameSettings();
+
+  /// The name players see.
+  String get gameTitle => game.displayName.trim().isEmpty ? name : game.displayName.trim();
+
+  /// Who makes the game.
+  String get publisherName => game.publisher.trim().isEmpty ? author : game.publisher.trim();
 
   EmberProject({
     required this.id,
@@ -87,6 +166,7 @@ class EmberProject {
       'scenes': serializedScenes,
       'scripts': scripts,
       'assets': assets,
+      'game': game.toJson(),
     };
   }
 
@@ -139,6 +219,7 @@ class EmberProject {
     if (json['assets'] is List) {
       project.assets.addAll((json['assets'] as List).map((e) => e.toString()));
     }
+    project.game = GameSettings.fromJson(json['game']);
 
     return project;
   }

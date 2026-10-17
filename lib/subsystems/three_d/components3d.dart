@@ -7,6 +7,7 @@ import 'material.dart';
 import 'mesh.dart';
 import 'primitives.dart';
 import 'camera3d.dart';
+import 'environment3d.dart';
 import 'lighting.dart';
 
 /// Available procedural geometric primitives for MeshRenderer3D.
@@ -15,6 +16,9 @@ enum MeshPrimitiveType {
   sphere,
   plane,
   cylinder,
+
+  /// A cylinder without end caps.
+  tube,
   pyramid,
   custom,
 }
@@ -35,7 +39,8 @@ class MeshRenderer3DComponent extends EmberComponent {
     Mesh3D? customMesh,
     this._castShadows = true,
     this._receiveShadows = true,
-  }) {
+    int segments = defaultSegments,
+  }) : _segments = segments.clamp(3, 64) {
     _material = material ?? Material3D();
     if (customMesh != null) {
       _mesh = customMesh;
@@ -44,6 +49,23 @@ class MeshRenderer3DComponent extends EmberComponent {
       _rebuildMesh();
     }
   }
+
+  /// Detail of round primitives (sphere, cylinder, tube): segments around.
+  /// Fewer is cheaper to draw; 6-8 suits small or distant parts.
+  int _segments;
+  static const int defaultSegments = 16;
+
+  int get segments => _segments;
+  set segments(int value) {
+    final v = value.clamp(3, 64);
+    if (v == _segments) return;
+    _segments = v;
+    _rebuildMesh();
+    notifyListeners();
+  }
+
+  /// Primitive meshes are shared between components (they are never modified).
+  static final Map<(MeshPrimitiveType, int), Mesh3D> _shared = {};
 
   MeshPrimitiveType get primitiveType => _primitiveType;
   set primitiveType(MeshPrimitiveType type) {
@@ -72,6 +94,31 @@ class MeshRenderer3DComponent extends EmberComponent {
     notifyListeners();
   }
 
+  /// Draw-order nudge in metres: positive draws this mesh as if it were that
+  /// much closer to the camera. There is no depth buffer, so a thin surface
+  /// on top of another (a decal, a glowing trim, a portal on a wall) may need
+  /// a small bias to stay in front of it.
+  double depthBias = 0;
+
+  // Hit flash (not saved): blends the mesh toward [flashColor] for a moment
+  Color flashColor = const Color(0xFFFFFFFF);
+  double _flashTime = 0, _flashLength = 0;
+
+  /// 0..1: how strongly the flash shows this frame.
+  double get flashAmount => _flashLength <= 0 ? 0 : (_flashTime / _flashLength).clamp(0.0, 1.0);
+
+  /// Flashes the mesh [color] for [seconds] (fading out), e.g. when hit.
+  void flash([Color color = const Color(0xFFFFFFFF), double seconds = 0.12]) {
+    flashColor = color;
+    _flashTime = seconds;
+    _flashLength = seconds;
+  }
+
+  @override
+  void onUpdate(double dt) {
+    if (_flashTime > 0) _flashTime -= dt;
+  }
+
   bool get receiveShadows => _receiveShadows;
   set receiveShadows(bool val) {
     _receiveShadows = val;
@@ -79,26 +126,18 @@ class MeshRenderer3DComponent extends EmberComponent {
   }
 
   void _rebuildMesh() {
-    switch (_primitiveType) {
-      case MeshPrimitiveType.cube:
-        _mesh = MeshPrimitives.createCube();
-        break;
-      case MeshPrimitiveType.sphere:
-        _mesh = MeshPrimitives.createSphere();
-        break;
-      case MeshPrimitiveType.plane:
-        _mesh = MeshPrimitives.createPlane();
-        break;
-      case MeshPrimitiveType.cylinder:
-        _mesh = MeshPrimitives.createCylinder();
-        break;
-      case MeshPrimitiveType.pyramid:
-        _mesh = MeshPrimitives.createPyramid();
-        break;
-      case MeshPrimitiveType.custom:
-        // Keep existing custom mesh
-        break;
-    }
+    if (_primitiveType == MeshPrimitiveType.custom) return; // keep the custom mesh
+    final round = _primitiveType == MeshPrimitiveType.sphere || _primitiveType == MeshPrimitiveType.cylinder || _primitiveType == MeshPrimitiveType.tube;
+    final n = round ? _segments : 0;
+    _mesh = _shared.putIfAbsent((_primitiveType, n), () => switch (_primitiveType) {
+          MeshPrimitiveType.cube => MeshPrimitives.createCube(),
+          MeshPrimitiveType.sphere => MeshPrimitives.createSphere(latSegments: (n * 3 ~/ 4).clamp(3, 48), lonSegments: n),
+          MeshPrimitiveType.plane => MeshPrimitives.createPlane(),
+          MeshPrimitiveType.cylinder => MeshPrimitives.createCylinder(segments: n),
+          MeshPrimitiveType.tube => MeshPrimitives.createCylinder(segments: n, caps: false),
+          MeshPrimitiveType.pyramid => MeshPrimitives.createPyramid(),
+          MeshPrimitiveType.custom => _mesh,
+        });
   }
 
   @override
@@ -115,6 +154,17 @@ class MeshRenderer3DComponent extends EmberComponent {
           options: MeshPrimitiveType.values.map((p) => p.name).toList(),
           tooltip: 'Procedural primitive or custom 3D mesh',
         ),
+        InspectableProperty<int>(
+          name: 'segments',
+          label: 'Segments (round shapes)',
+          type: InspectableType.integer,
+          getter: () => _segments,
+          setter: (val) => segments = val,
+          min: 3,
+          max: 64,
+          step: 1,
+          tooltip: 'Detail of spheres, cylinders and tubes; fewer draws faster',
+        ),
         InspectableProperty<Color>(
           name: 'color',
           label: 'Albedo Color',
@@ -124,6 +174,20 @@ class MeshRenderer3DComponent extends EmberComponent {
             _material.color = val;
             notifyListeners();
           },
+        ),
+        InspectableProperty<double>(
+          name: 'emission',
+          label: 'Glow (Emission)',
+          type: InspectableType.number,
+          getter: () => _material.emission,
+          setter: (val) {
+            _material.emission = val.clamp(0.0, 1.0);
+            notifyListeners();
+          },
+          min: 0.0,
+          max: 1.0,
+          step: 0.05,
+          tooltip: '1 = glows in its own colour, unaffected by lights',
         ),
         InspectableProperty<double>(
           name: 'roughness',
@@ -161,6 +225,20 @@ class MeshRenderer3DComponent extends EmberComponent {
             notifyListeners();
           },
         ),
+        InspectableProperty<double>(
+          name: 'depthBias',
+          label: 'Draw Order Bias (m)',
+          type: InspectableType.number,
+          getter: () => depthBias,
+          setter: (val) {
+            depthBias = val;
+            notifyListeners();
+          },
+          min: -10.0,
+          max: 10.0,
+          step: 0.1,
+          tooltip: 'Positive keeps a thin surface (trim, decal, portal) drawn in front of what it sits on',
+        ),
         InspectableProperty<bool>(
           name: 'castShadows',
           label: 'Cast Shadows',
@@ -177,6 +255,8 @@ class MeshRenderer3DComponent extends EmberComponent {
       'material': _material.toJson(),
       'castShadows': _castShadows,
       'receiveShadows': _receiveShadows,
+      if (depthBias != 0) 'depthBias': depthBias,
+      if (_segments != defaultSegments) 'segments': _segments,
     };
   }
 
@@ -192,6 +272,8 @@ class MeshRenderer3DComponent extends EmberComponent {
     }
     _castShadows = json['castShadows'] as bool? ?? true;
     _receiveShadows = json['receiveShadows'] as bool? ?? true;
+    depthBias = (json['depthBias'] as num?)?.toDouble() ?? 0;
+    _segments = ((json['segments'] as num?)?.toInt() ?? defaultSegments).clamp(3, 64);
     _rebuildMesh();
     notifyListeners();
   }
@@ -204,7 +286,8 @@ class MeshRenderer3DComponent extends EmberComponent {
       customMesh: _primitiveType == MeshPrimitiveType.custom ? _mesh : null,
       castShadows: _castShadows,
       receiveShadows: _receiveShadows,
-    );
+      segments: _segments,
+    )..depthBias = depthBias;
   }
 }
 
@@ -458,6 +541,8 @@ void register3DComponents() {
     comp.fromJson(json);
     return comp;
   });
+
+  ComponentRegistry.register('Environment 3D', (json) => Environment3DComponent()..fromJson(json));
 
   ComponentRegistry.register('Camera', (json) {
     final comp = CameraComponent();

@@ -18,6 +18,9 @@ void main() {
 
     // Scroll the Ember Quest card into view and press its own Create button
     // (the one closest below the card title)
+    // The template grid builds cards lazily: scroll until the card exists
+    await tester.scrollUntilVisible(find.text('Ember Quest'), 200,
+        scrollable: find.descendant(of: find.byType(GridView), matching: find.byType(Scrollable)).first);
     await tester.ensureVisible(find.text('Ember Quest'));
     await tester.pump(const Duration(milliseconds: 100));
     final title = tester.getCenter(find.text('Ember Quest'));

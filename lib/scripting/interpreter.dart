@@ -2,7 +2,7 @@
 library;
 
 import 'dart:math' as math;
-import 'package:vector_math/vector_math_64.dart' show Vector2;
+import 'package:vector_math/vector_math_64.dart' show Vector2, Vector3;
 import 'ast.dart';
 import 'lexer.dart';
 import 'parser.dart' show isMultiVar;
@@ -313,6 +313,7 @@ class Interpreter {
         if (e.op == '!') return !_truthy(v, e.operand);
         if (v is num) return -v;
         if (v is Vector2) return -v;
+        if (v is Vector3) return -v;
         throw error("Can't negate ${describe(v)}", e);
       case BinaryExpr():
         return binary(e.op, eval(e.left, scope), eval(e.right, scope), e);
@@ -576,6 +577,15 @@ class Interpreter {
       if (op == '/') return l / r.toDouble();
     }
     if (l is num && r is Vector2 && op == '*') return r * l.toDouble();
+    if (l is Vector3 && r is Vector3) {
+      if (op == '+') return l + r;
+      if (op == '-') return l - r;
+    }
+    if (l is Vector3 && r is num) {
+      if (op == '*') return l * r.toDouble();
+      if (op == '/') return l / r.toDouble();
+    }
+    if (l is num && r is Vector3 && op == '*') return r * l.toDouble();
     throw error("Can't use $op on ${describe(l)} and ${describe(r)}", at);
   }
 
@@ -804,12 +814,17 @@ class Interpreter {
         _ => typeOf(v),
       };
 
+  /// True when compiled to JavaScript, where 1 and 1.0 are the same number
+  /// (`1 is double` holds), so a whole number never prints as "1.0".
+  static const bool webNumbers = identical(1, 1.0);
+
   static String stringify(Object? v) {
     if (v is String) return v;
-    if (v is double && v == v.roundToDouble() && v.abs() < 1e15) return v.toStringAsFixed(1);
+    if (!webNumbers && v is double && v == v.roundToDouble() && v.abs() < 1e15) return v.toStringAsFixed(1);
     if (v is List) return '[${v.map(stringify).join(', ')}]';
     if (v is Map) return '{${v.entries.map((e) => '${stringify(e.key)}: ${stringify(e.value)}').join(', ')}}';
     if (v is Vector2) return 'Vec2(${_n(v.x)}, ${_n(v.y)})';
+    if (v is Vector3) return 'Vec3(${_n(v.x)}, ${_n(v.y)}, ${_n(v.z)})';
     if (v != null) {
       for (final h in hostTypes) {
         if (h.matches(v)) return h.describe(v);
@@ -822,8 +837,9 @@ class Interpreter {
 
   /// Converts an Inspector override to the type of the field's default.
   static Object? coerceLike(Object? value, Object? like) {
-    if (like is int && value is num) return value.round();
+    // double first: on the web every number is both, and rounding would lose fractions
     if (like is double && value is num) return value.toDouble();
+    if (like is int && value is num) return value.round();
     if (like is num && value is String) return num.tryParse(value) ?? like;
     if (like is bool && value is! bool) return value == 'true' || value == 1;
     if (like is String && value is! String) return value?.toString() ?? '';

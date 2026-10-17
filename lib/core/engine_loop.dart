@@ -1,7 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
+import 'package:vector_math/vector_math_64.dart' show Vector2;
 import 'event_bus.dart';
 import 'input.dart';
+import 'mouse_lock.dart';
 import 'tween.dart';
 import '../scripting/script_library.dart';
 import '../subsystems/two_d/door.dart';
@@ -209,6 +212,7 @@ class EmberEngine with ChangeNotifier {
     Doors.reset();
     _activeScene.isRunning = false;
     AudioSystem.instance.stopAll();
+    MouseLock.reset();
     Input.reset();
 
     // Restore pre-simulation snapshot
@@ -264,6 +268,10 @@ class EmberEngine with ChangeNotifier {
     UIRenderer.update(_activeScene);
   }
 
+  /// True while the running game wants mouse capture but does not have it
+  /// yet: it is held until the player clicks the game view.
+  bool get waitingForMouse => _playState == PlayState.playing && MouseLock.wanted && MouseLock.supported && !MouseLock.locked;
+
   void tick(double dt) {
     // 1. Calculate FPS & timing metrics
     _frameTimeMs = dt * 1000.0;
@@ -275,8 +283,19 @@ class EmberEngine with ChangeNotifier {
       _fpsAccumulator = 0.0;
     }
 
-    // 2-3. Physics + scripts (scaled game time), then tweens / UI (real time)
-    if (_playState == PlayState.playing) _gameFrame(dt);
+    // Captured mouse (first-person games): movement since last frame, Escape lets go
+    if (MouseLock.locked) {
+      if (Input.isKeyJustPressed(LogicalKeyboardKey.escape) || _playState != PlayState.playing) {
+        MouseLock.unlock();
+      } else {
+        final (dx, dy) = MouseLock.takeDelta();
+        if (dx != 0 || dy != 0) Input.onMouseMove(Input.mousePosition, Vector2(dx, dy));
+      }
+    }
+
+    // 2-3. Physics + scripts (scaled game time), then tweens / UI (real time).
+    // A first-person game waits while the mouse is not captured (start, Esc, Alt+Tab).
+    if (_playState == PlayState.playing && !waitingForMouse) _gameFrame(dt);
 
     // 4. Update audio system (ducking, spatial audio, voice cleanup)
     final listener = _findAudioListener();

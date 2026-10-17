@@ -3,6 +3,7 @@ import 'package:vector_math/vector_math_64.dart' as vm;
 import 'engine_loop.dart';
 import 'game_script.dart';
 import 'input.dart';
+import 'mouse_lock.dart';
 import 'transform2d.dart';
 import 'transform3d.dart';
 import '../subsystems/audio/audio_system.dart';
@@ -32,6 +33,8 @@ class FPSPlayerController extends GameScript {
 
   @override
   void onStart() {
+    // Mouse-look: capture the mouse on the first click in the game view
+    MouseLock.wanted = true;
     // Ensure character controller is attached
     if (entity?.getComponent<CharacterController3DComponent>() == null) {
       entity?.addComponent(CharacterController3DComponent());

@@ -2,7 +2,7 @@
 //
 //   dart run tool/generate_template_art.dart
 //
-// Output: assets/templates/{flappy,quest,legends,siege}/* and the Ember
+// Output: assets/templates/{flappy,quest,legends,siege,arena,gems,solitaire,story}/* and the Ember
 // Engine app icons (windows/runner/resources, android mipmaps, web/icons)
 // (committed, so this only needs to be re-run after changing the art below).
 import 'dart:io';
@@ -12,6 +12,10 @@ import 'dart:typed_data';
 part 'legends_art.dart';
 part 'siege_art.dart';
 part 'app_icon_art.dart';
+part 'arena_art.dart';
+part 'gems_art.dart';
+part 'cards_art.dart';
+part 'story_art.dart';
 
 void main() {
   void save(String folder, String name, _Img img) {
@@ -46,6 +50,18 @@ void main() {
 
   // Ember Siege (physics slingshot)
   _saveSiege(save);
+
+  // Ember Arena (3D wave shooter)
+  _saveArena(save);
+
+  // Ember Gems (match-3)
+  _saveGems(save);
+
+  // Ember Solitaire (Klondike)
+  _saveCards(save);
+
+  // The Last Ember (visual novel)
+  _saveStory(save);
 
   // Ember Engine app icon (Windows, Android, web)
   _saveAppIcons();

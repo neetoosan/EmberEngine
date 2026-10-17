@@ -80,6 +80,10 @@ abstract class GameScript {
 
   /// [by] (usually the player) interacted with this entity (e.g. pressed E next to it).
   void onInteract(EmberEntity by) {}
+
+  /// A named event from a component (e.g. Enemy AI 3D sends "onAttack").
+  /// Ember Scripts receive it as a call to the function of that name, if defined.
+  void onMessage(String name, List<Object?> args) {}
 }
 
 /// Factory signature for instantiating custom GameScripts by name.

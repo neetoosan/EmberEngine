@@ -9,6 +9,7 @@ import '../../core/transform3d.dart';
 import '../particles/particle_system.dart';
 import 'camera3d.dart';
 import 'components3d.dart';
+import 'environment3d.dart';
 import 'lighting.dart';
 import 'mesh.dart';
 
@@ -113,6 +114,19 @@ class Renderer3D {
     final projMatrix = camera.getProjectionMatrix(aspect);
     final viewProjMatrix = projMatrix * viewMatrix;
 
+    // 0. Sky and fog from the scene's Environment 3D
+    Environment3DComponent? env;
+    for (final c in engine.activeScene.componentsOf<Environment3DComponent>()) {
+      if (c.enabled && (c.entity?.enabled ?? false)) {
+        env = c;
+        break;
+      }
+    }
+    if (env != null) _renderSky(canvas, size, env, viewProjMatrix, cameraPosition, cameraRotation);
+    final fogOn = env != null && env.fog && env.fogEnd > env.fogStart && env.fogMax > 0;
+    final fogStart = env?.fogStart ?? 0, fogInv = fogOn ? 1 / (env.fogEnd - env.fogStart) : 0.0;
+    final fogMax = env?.fogMax ?? 0, fogArgb = env?.fogColor.toARGB32() ?? 0;
+
     // 1. Render 3D Ground Grid
     if (showGrid) {
       _renderGroundGrid(canvas, size, viewProjMatrix, cameraPosition);
@@ -132,7 +146,7 @@ class Renderer3D {
 
     for (final mr in engine.activeScene.componentsOf<MeshRenderer3DComponent>()) {
       final entity = mr.entity;
-      if (entity == null || !entity.enabled || !mr.enabled) continue;
+      if (entity == null || !mr.enabled || !entity.activeInHierarchy) continue;
       final t3d = entity.getComponent<Transform3DComponent>();
       if (t3d == null) continue;
       stats.objects++;
@@ -148,11 +162,25 @@ class Renderer3D {
       final mat = mr.material;
       final wire = wireframeOverride || mat.wireframe;
       final isFloor = mr.primitiveType == MeshPrimitiveType.plane;
+      final bias = mr.depthBias;
       final smooth = mesh.smoothShading;
       final m = worldMatrix.storage, p = mvpMatrix.storage;
       final base = mat.color;
       final baseR = base.r, baseG = base.g, baseB = base.b, alpha = base.a;
       final roughness = mat.roughness, metallic = mat.metallic;
+      // Glow, hit flash and fog are blended into each vertex colour
+      final emission = mat.emission, flash = mr.flashAmount;
+      final baseArgb = base.toARGB32(), flashArgb = mr.flashColor.toARGB32();
+      final post = fogOn || emission > 0 || flash > 0;
+      int fx(int c, double w) {
+        if (emission > 0) c = _mix(c, baseArgb, emission);
+        if (flash > 0) c = _mix(c, flashArgb, flash);
+        if (fogOn) {
+          final f = ((w - fogStart) * fogInv).clamp(0.0, fogMax);
+          if (f > 0) c = _mix(c, fogArgb, f);
+        }
+        return c;
+      }
 
       // Normal matrix (inverse transpose of the world rotation/scale)
       final nm = Matrix3.copy(worldMatrix.getRotation());
@@ -225,9 +253,14 @@ class Renderer3D {
               (screen[1].dy - screen[0].dy) * (screen[2].dx - screen[0].dx);
           if (cross >= 0) continue;
           final col = faceColor();
-          final depth = isFloor ? double.maxFinite : poly.fold<double>(0, (s, v) => s + v.w) / poly.length;
+          final depth = isFloor ? double.maxFinite : poly.fold<double>(0, (s, v) => s + v.w) / poly.length - bias;
           for (var i = 1; i < screen.length - 1; i++) {
-            _addTriangle(screen[0].dx, screen[0].dy, screen[i].dx, screen[i].dy, screen[i + 1].dx, screen[i + 1].dy, col, col, col, depth, wire);
+            if (post) {
+              _addTriangle(screen[0].dx, screen[0].dy, screen[i].dx, screen[i].dy, screen[i + 1].dx, screen[i + 1].dy, fx(col, poly[0].w),
+                  fx(col, poly[i].w), fx(col, poly[i + 1].w), depth, wire);
+            } else {
+              _addTriangle(screen[0].dx, screen[0].dy, screen[i].dx, screen[i].dy, screen[i + 1].dx, screen[i + 1].dy, col, col, col, depth, wire);
+            }
           }
           continue;
         }
@@ -239,12 +272,20 @@ class Renderer3D {
         // with screen y pointing down a camera-facing triangle has a negative cross product
         if ((x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0) >= 0) continue;
         // Flat planes are floors: always painted first so they never cover objects on them
-        final depth = isFloor ? double.maxFinite : (wa + wb + wc) / 3;
+        final depth = isFloor ? double.maxFinite : (wa + wb + wc) / 3 - bias;
         if (smooth) {
-          _addTriangle(x0, y0, x1, y1, x2, y2, lit(a), lit(b), lit(c), depth, wire);
+          if (post) {
+            _addTriangle(x0, y0, x1, y1, x2, y2, fx(lit(a), wa), fx(lit(b), wb), fx(lit(c), wc), depth, wire);
+          } else {
+            _addTriangle(x0, y0, x1, y1, x2, y2, lit(a), lit(b), lit(c), depth, wire);
+          }
         } else {
           final col = faceColor();
-          _addTriangle(x0, y0, x1, y1, x2, y2, col, col, col, depth, wire);
+          if (post) {
+            _addTriangle(x0, y0, x1, y1, x2, y2, fx(col, wa), fx(col, wb), fx(col, wc), depth, wire);
+          } else {
+            _addTriangle(x0, y0, x1, y1, x2, y2, col, col, col, depth, wire);
+          }
         }
       }
     }
@@ -305,7 +346,7 @@ class Renderer3D {
     stats.drawMs = timer.elapsedMicroseconds / 1000;
 
     // 6. Draw 3D Particles
-    _renderParticles3D(canvas, engine, viewProjMatrix, size);
+    _renderParticles3D(canvas, engine, viewProjMatrix, size, projMatrix.storage[5]);
 
     // 7. Draw Selected Entity Highlight Outline
     if (showSelection) {
@@ -314,21 +355,67 @@ class Renderer3D {
     canvas.restore();
   }
 
-  static void _renderParticles3D(Canvas canvas, EmberEngine engine, Matrix4 viewProj, Size size) {
+  /// Particles as dots that shrink with distance ([focal] = projection y scale).
+  static void _renderParticles3D(Canvas canvas, EmberEngine engine, Matrix4 viewProj, Size size, double focal) {
     final particlePaint = Paint()..style = PaintingStyle.fill;
+    final m = viewProj.storage;
+    final pixelsPerUnit = size.height * 0.5 * focal;
 
-    for (final entity in engine.activeScene.allEntities) {
-      if (!entity.enabled) continue;
-      final emitter = entity.getComponent<ParticleEmitter3DComponent>();
-      if (emitter == null || !emitter.enabled) continue;
-
+    for (final emitter in engine.activeScene.componentsOf<ParticleEmitter3DComponent>()) {
+      final entity = emitter.entity;
+      if (entity == null || !emitter.enabled || !entity.activeInHierarchy) continue;
       for (final p in emitter.particles) {
-        final screenPos = _projectPoint(p.position, viewProj, size);
-        if (screenPos != null) {
-          particlePaint.color = p.color;
-          canvas.drawCircle(screenPos, p.size * 30.0, particlePaint);
-        }
+        final x = p.position.x, y = p.position.y, z = p.position.z;
+        final w = m[3] * x + m[7] * y + m[11] * z + m[15];
+        if (w <= 0.4) continue; // right at the lens a dot would cover the view
+        final sx = ((m[0] * x + m[4] * y + m[8] * z + m[12]) / w + 1) * 0.5 * size.width;
+        final sy = (1 - (m[1] * x + m[5] * y + m[9] * z + m[13]) / w) * 0.5 * size.height;
+        final radius = math.min(size.height * 0.05, p.size * 0.35 * pixelsPerUnit / w);
+        if (radius < 0.4) continue;
+        particlePaint.color = p.color;
+        canvas.drawCircle(Offset(sx, sy), radius, particlePaint);
       }
+    }
+  }
+
+  /// Blends [b] into [a] by [t] (colour channels only; keeps [a]'s alpha).
+  static int _mix(int a, int b, double t) {
+    final u = 1 - t;
+    final r = (((a >> 16) & 0xFF) * u + ((b >> 16) & 0xFF) * t).round();
+    final g = (((a >> 8) & 0xFF) * u + ((b >> 8) & 0xFF) * t).round();
+    final bl = ((a & 0xFF) * u + (b & 0xFF) * t).round();
+    return (a & 0xFF000000) | (r << 16) | (g << 8) | bl;
+  }
+
+  /// Sky gradient above the horizon line, [Environment3DComponent.ground] below it.
+  static void _renderSky(Canvas canvas, Size size, Environment3DComponent env, Matrix4 viewProj, Vector3 camPos, Quaternion camRot) {
+    final fwd = camRot.asRotationMatrix().transform(Vector3(0, 0, -1));
+    var flat = Vector3(fwd.x, 0, fwd.z);
+    if (flat.length2 < 1e-6) flat = Vector3(0, 0, -1);
+    flat.normalize();
+    final far = camPos + flat * 10000;
+    final m = viewProj.storage;
+    final w = m[3] * far.x + m[7] * far.y + m[11] * far.z + m[15];
+    double horizonY;
+    if (w > 0) {
+      horizonY = (1 - (m[1] * far.x + m[5] * far.y + m[9] * far.z + m[13]) / w) * 0.5 * size.height;
+    } else {
+      horizonY = fwd.y > 0 ? size.height * 2 : -size.height; // looking straight up / down
+    }
+    if (horizonY > 0) {
+      final top = horizonY - size.height * 0.6; // the gradient spans 60% of the view above the horizon
+      canvas.drawRect(
+        Rect.fromLTRB(0, 0, size.width, math.min(horizonY, size.height)),
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [env.skyTop, env.horizon],
+          ).createShader(Rect.fromLTRB(0, top, size.width, horizonY)),
+      );
+    }
+    if (horizonY < size.height) {
+      canvas.drawRect(Rect.fromLTRB(0, math.max(0, horizonY), size.width, size.height), Paint()..color = env.ground);
     }
   }
 

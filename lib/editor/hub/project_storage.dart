@@ -99,6 +99,7 @@ class ProjectStorage {
       'scenes': sceneFiles,
       'scripts': scriptFiles,
       'assets': project.assets,
+      'game': project.game.toJson(),
     };
     await _writeAtomic(
       _join(dir.path, manifestFileName),
@@ -162,6 +163,7 @@ class ProjectStorage {
     if (assets is List) {
       project.assets.addAll(assets.map((e) => e.toString()));
     }
+    project.game = GameSettings.fromJson(json['game']);
     return project;
   }
 

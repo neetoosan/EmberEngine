@@ -58,6 +58,9 @@ class EmberEntity with ChangeNotifier {
   /// Whether this entity and its components are enabled.
   bool get enabled => _enabled;
 
+  /// Enabled, and so is every parent (a disabled parent hides its children too).
+  bool get activeInHierarchy => _enabled && (parent?.activeInHierarchy ?? true);
+
   set enabled(bool value) {
     if (_enabled == value) return;
     _enabled = value;

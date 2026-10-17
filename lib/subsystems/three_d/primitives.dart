@@ -151,10 +151,12 @@ class MeshPrimitives {
   }
 
   /// Generates a 3D cylinder mesh.
+  /// A cylinder; with [caps] false, an open tube (pipes, rings around pillars).
   static Mesh3D createCylinder({
     double radius = 0.5,
     double height = 1.0,
     int segments = 16,
+    bool caps = true,
   }) {
     final vertices = <Vertex3D>[];
     final triangles = <Triangle3D>[];
@@ -194,6 +196,27 @@ class MeshPrimitives {
       // Counter-clockwise seen from outside (faces point outward, like the normals)
       triangles.add(Triangle3D(top1, top2, bot1));
       triangles.add(Triangle3D(top2, bot2, bot1));
+    }
+
+    // End caps (own vertices, so they stay flat while the sides are smooth)
+    for (final top in [if (caps) true, if (caps) false]) {
+      final y = top ? halfH : -halfH;
+      final normal = Vector3(0.0, top ? 1.0 : -1.0, 0.0);
+      final center = vertices.length;
+      vertices.add(Vertex3D(position: Vector3(0.0, y, 0.0), normal: normal, uv: Vector2(0.5, 0.5)));
+      for (int i = 0; i < segments; i++) {
+        final angle = i / segments * 2 * math.pi;
+        vertices.add(Vertex3D(
+          position: Vector3(math.cos(angle) * radius, y, math.sin(angle) * radius),
+          normal: normal,
+          uv: Vector2(0.5 + math.cos(angle) * 0.5, 0.5 + math.sin(angle) * 0.5),
+        ));
+      }
+      for (int i = 0; i < segments; i++) {
+        final a = center + 1 + i, b = center + 1 + (i + 1) % segments;
+        // Counter-clockwise seen from outside: the top cap from above, the bottom cap from below
+        triangles.add(top ? Triangle3D(center, b, a) : Triangle3D(center, a, b));
+      }
     }
 
     final mesh = Mesh3D(name: 'Cylinder', vertices: vertices, triangles: triangles);

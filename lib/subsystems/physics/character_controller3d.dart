@@ -24,6 +24,7 @@ class CharacterController3DComponent extends EmberComponent {
   double stepHeight = 0.35;
 
   final Vector3 _velocity = Vector3.zero();
+  final Vector3 _knock = Vector3.zero();
   bool _isGrounded = false;
   final double _groundCheckDistance = 0.15;
 
@@ -37,6 +38,17 @@ class CharacterController3DComponent extends EmberComponent {
   });
 
   bool get isGrounded => _isGrounded;
+
+  /// Pushes the character (metres/second); fades out over about half a second.
+  /// An upward part lifts it off the ground.
+  void knockback(Vector3 push) {
+    _knock.x += push.x;
+    _knock.z += push.z;
+    if (push.y > 0) {
+      _velocity.y = math.max(_velocity.y, push.y);
+      _isGrounded = false;
+    }
+  }
   Vector3 get velocity => _velocity;
 
   /// Moves the kinematic character in local or world space.
@@ -75,8 +87,12 @@ class CharacterController3DComponent extends EmberComponent {
       _velocity.y -= gravity * dt;
     }
 
-    // Integrate position
-    final pos = t3d.position + _velocity * dt;
+    // Integrate position (plus any knockback, which fades out)
+    final pos = t3d.position + (_velocity + _knock) * dt;
+    if (_knock.length2 > 0) {
+      _knock.scale(math.max(0.0, 1 - dt * 6));
+      if (_knock.length2 < 0.01) _knock.setZero();
+    }
     final halfH = height * 0.5;
     _isGrounded = false;
 

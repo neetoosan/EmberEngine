@@ -6,7 +6,9 @@ import 'package:vector_math/vector_math_64.dart' hide Colors;
 import '../../core/engine_loop.dart';
 import '../../core/entity.dart';
 import '../../core/event_bus.dart';
+import '../../core/game_script.dart';
 import '../../core/input.dart';
+import '../../core/mouse_lock.dart';
 import '../../core/transform3d.dart';
 import '../physics/character_controller3d.dart';
 import '../ui/ui_widgets.dart';
@@ -58,6 +60,9 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
     if (mounted) setState(() {});
   }
 
+  static bool _usesStockFpsController(EmberEntity camera) =>
+      camera.getComponents<ScriptComponent>().any((s) => s.scriptName == 'FPS Player Controller');
+
   /// True while a simulation runs and the scene has a camera to look through.
   bool get _isGameView =>
       widget.engine.playState != PlayState.stopped && _findGameCamera() != null;
@@ -82,9 +87,11 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
   }
 
   void _forwardGamePointer(PointerEvent event) {
+    UIRenderer.pointer = MouseLock.locked ? null : event.localPosition; // button hover
     Input.onMouseMove(
       Vector2(event.localPosition.dx, event.localPosition.dy),
-      Vector2(event.delta.dx, event.delta.dy),
+      // While captured the engine reads movement from MouseLock (the pointer itself is held still)
+      MouseLock.locked ? Vector2.zero() : Vector2(event.delta.dx, event.delta.dy),
     );
   }
 
@@ -92,6 +99,15 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
     _lastMousePos = event.localPosition;
 
     if (_isGameView) {
+      // UI buttons take clicks first (unless the mouse is captured for aiming)
+      if (!MouseLock.locked) {
+        final scene = widget.engine.activeScene;
+        final button = UIRenderer.buttonAt(scene, Offset.zero & _viewportSize, 1.0, event.localPosition);
+        if (button != null) {
+          UIRenderer.dispatch(scene, button.action);
+          return;
+        }
+      }
       Input.onMouseDown(_buttonIndex(event.buttons));
       return;
     }
@@ -265,7 +281,7 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
             // 1. 3D Render Canvas
             Positioned.fill(
               child: MouseRegion(
-                cursor: isGameView ? SystemMouseCursors.precise : MouseCursor.defer,
+                cursor: isGameView ? (MouseLock.locked ? SystemMouseCursors.none : SystemMouseCursors.precise) : MouseCursor.defer,
                 child: Listener(
                   onPointerDown: _handlePointerDown,
                   onPointerMove: _handlePointerMove,
@@ -289,8 +305,9 @@ class _Viewport3DWidgetState extends State<Viewport3DWidget> {
               ),
             ),
 
-            if (isGameView) ...[
-              // Crosshair
+            // The stock FPS Player Controller gets a crosshair and a controls hint;
+            // games with their own player script draw their own HUD.
+            if (isGameView && _usesStockFpsController(gameCam)) ...[
               const Center(
                 child: IgnorePointer(
                   child: Icon(Icons.add, size: 22, color: Color(0xCCFFFFFF)),

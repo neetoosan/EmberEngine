@@ -1,3 +1,4 @@
+import 'mouse_lock.dart';
 import 'package:flutter/services.dart';
 import 'package:vector_math/vector_math_64.dart' as vm;
 
@@ -27,8 +28,8 @@ class Input {
 
   static void bindHardwareKeyboard() => InputManager._singleton.bindHardwareKeyboard();
 
-  static bool get isPointerLocked => InputManager._singleton.isPointerLocked;
-  static set isPointerLocked(bool locked) => InputManager._singleton.isPointerLocked = locked;
+  /// True while the mouse is captured for mouse-look (see [MouseLock]).
+  static bool get isPointerLocked => MouseLock.locked;
 
   static void setVirtualJoystick(vm.Vector2 axis) => InputManager._singleton.setVirtualJoystick(axis);
   static void setVirtualAction(dynamic action, bool pressed) => InputManager._singleton.setVirtualAction(action, pressed);
@@ -73,7 +74,6 @@ class InputManager {
   final Set<int> _mouseButtons = {};
   final Set<int> _justPressedMouseButtons = {};
   final Set<int> _justReleasedMouseButtons = {};
-  bool isPointerLocked = false;
 
   /// Pointer position in 2D world coordinates (set by the 2D viewport while playing).
   vm.Vector2 mouseWorldPosition = vm.Vector2.zero();

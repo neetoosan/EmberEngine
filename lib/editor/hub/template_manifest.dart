@@ -21,12 +21,24 @@ import '../../templates/legends_scripts.dart';
 import '../../templates/quest_game.dart';
 import '../../templates/platformer_starter.dart';
 import '../../templates/quest_scripts.dart';
+import '../../templates/arena_game.dart';
+import '../../templates/arena_scripts.dart';
+import '../../templates/gems_game.dart';
+import '../../templates/gems_scripts.dart';
 import '../../templates/siege_game.dart';
+import '../../templates/solitaire_game.dart';
+import '../../templates/solitaire_scripts.dart';
+import '../../templates/story_game.dart';
+import '../../templates/story_scripts.dart';
 import '../../templates/siege_scripts.dart';
 import 'project_manifest.dart';
 
 /// Identifier enum for built-in starter templates.
 enum ProjectTemplateType {
+  arena,
+  gems,
+  solitaire,
+  story,
   siege,
   legends,
   quest,
@@ -81,6 +93,38 @@ class ProjectTemplate {
 
     // Build template specific scene & scripts
     switch (type) {
+      case ProjectTemplateType.arena:
+        project.scenes[Arena.title] = buildArenaTitle();
+        project.scenes[Arena.level] = buildArenaLevel();
+        project.defaultSceneName = Arena.title;
+        project.scripts.addAll(arenaScripts); // editable in the Script workspace
+        project.assets.addAll(Arena.assetFiles);
+        break;
+      case ProjectTemplateType.gems:
+        project.scenes[Gems.title] = buildGemsTitle();
+        project.scenes['Level 1'] = buildGemsLevel1();
+        project.scenes['Level 2'] = buildGemsLevel2();
+        project.scenes['Level 3'] = buildGemsLevel3();
+        project.defaultSceneName = Gems.title;
+        project.scripts.addAll(gemsScripts); // editable in the Script workspace
+        project.assets.addAll(Gems.assetFiles);
+        break;
+      case ProjectTemplateType.solitaire:
+        project.scenes[Solitaire.title] = buildSolitaireTitle();
+        for (final mode in Solitaire.modes) {
+          project.scenes[mode] = buildSolitaireTable(mode);
+        }
+        project.defaultSceneName = Solitaire.title;
+        project.scripts.addAll(solitaireScripts); // editable in the Script workspace
+        project.assets.addAll(Solitaire.assetFiles);
+        break;
+      case ProjectTemplateType.story:
+        project.scenes[StoryTemplate.title] = buildStoryTitle();
+        project.scenes[StoryTemplate.story] = buildStoryScene();
+        project.defaultSceneName = StoryTemplate.title;
+        project.scripts.addAll(storyScripts); // the story and scripts, editable in the Script workspace
+        project.assets.addAll(StoryTemplate.assetFiles);
+        break;
       case ProjectTemplateType.siege:
         project.scenes[Siege.title] = buildSiegeTitle();
         project.scenes['Level 1'] = buildSiegeLevel1();
@@ -389,6 +433,74 @@ class TemplateCatalog {
         'Animated hero sprite sheet (idle, run, jump)',
         'Tilemap level you can repaint, one-way planks',
         'Coins, a coin counter and a pit that restarts the level',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.arena,
+      title: 'Ember Arena',
+      subtitle: 'First-Person 3D Wave Shooter',
+      description:
+          'Robots pour out of four portals in a low-poly foundry: exploding drones, strafing gunners and charging brutes. A blaster and a scatter gun, health and ammo drops, waves that keep getting bigger, and saved best wave and score.',
+      icon: Icons.gps_fixed_rounded,
+      accentColor: Color(0xFFF97316),
+      defaultPipeline: RenderPipelineMode.threeD,
+      tags: ['3D', 'First-person', 'Shooter', 'AI', 'Music'],
+      features: [
+        'Mouse-look with real mouse capture (Windows and web)',
+        'Enemy AI 3D: chasers, shooters and chargers',
+        '3D projectiles, hitscan weapons and hit flashes',
+        'Sky, fog and glowing materials',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.gems,
+      title: 'Ember Gems',
+      subtitle: 'Match-3 Puzzle',
+      description:
+          'Swap gems to line up three of a colour. Lines of four make blast gems, L and T shapes make bombs, five make a star that clears a colour. Three levels with different goals (score, collect rubies, break the ice), cascades, hints, stars and unlocks.',
+      icon: Icons.diamond_rounded,
+      accentColor: Color(0xFFA855F7),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Puzzle', 'Match-3', 'Touch', 'Pixel art', 'Music'],
+      features: [
+        'Click or drag to swap; cascades and combos',
+        'Blast gems, bombs and colour-clearing stars',
+        'Score, collect and ice goals with move limits',
+        'Hints, automatic reshuffle, stars and unlocks',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.solitaire,
+      title: 'Ember Solitaire',
+      subtitle: 'Klondike Card Game',
+      description:
+          'The classic patience game: drag cards and runs between the seven columns, build the four suits from Ace to King. Click a card to send it to the best place, undo any move, ask for a hint, finish automatically, and watch the cards bounce when you win. Draw 1 and Draw 3, with best times.',
+      icon: Icons.style_rounded,
+      accentColor: Color(0xFF16A34A),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Cards', 'Puzzle', 'Drag & drop', 'Pixel art', 'Music'],
+      features: [
+        'Drag cards and runs; one-click moves',
+        'Undo, hints and auto-finish',
+        'Score, moves, timer and saved records',
+        'A full pixel-art deck to reuse in other card games',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.story,
+      title: 'The Last Ember',
+      subtitle: 'Visual Novel (Story Player)',
+      description:
+          'A short branching story: backgrounds, two characters with expressions, a typewriter dialogue box, choices that change how much Kai trusts you, and four endings (one secret). History log, Auto, Skip, three save slots and Continue. Written in a simple story file you can edit while it plays.',
+      icon: Icons.auto_stories_rounded,
+      accentColor: Color(0xFFF59E0B),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Visual novel', 'Story', 'Choices', 'Pixel art', 'Music'],
+      features: [
+        'Story Player: write scenes, lines, choices and endings in plain text',
+        'Characters with expressions, backgrounds with fades',
+        'Variables and conditions, four endings',
+        'History, Auto, Skip, save slots and Continue',
       ],
     ),
     ProjectTemplate(

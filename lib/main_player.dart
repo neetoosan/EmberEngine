@@ -10,7 +10,6 @@ import 'core/save_data.dart';
 import 'core/event_bus.dart';
 import 'core/input.dart';
 import 'core/scene.dart';
-import 'editor/hub/game_exporter.dart';
 import 'editor/hub/project_manifest.dart';
 import 'editor/hub/project_package.dart';
 import 'editor/mobile/virtual_joystick.dart';
@@ -34,11 +33,15 @@ void main(List<String> args) async {
   registerGameScripts();
   // Real audio output is attached here (not in the widget) so widget tests stay silent
   AudioOutput.instance.attach();
-  runApp(EmberPlayerApp(project: _loadGame(args) ?? await loadBundledGame()));
+  final project = _loadGame(args) ?? await loadBundledGame();
+  // Saved progress is loaded before the first scene starts, so its scripts see it.
+  // Keyed by project name (not display title) so renaming the game keeps saves.
+  await SaveData.instance.open(project?.name ?? 'Ember Demo');
+  runApp(EmberPlayerApp(project: project));
 }
 
 /// Where web and Android exports put the game inside the player's bundle.
-const String bundledGameKey = 'assets/game/${GameExporter.gameFileName}';
+const String bundledGameKey = 'assets/game/$emberGameFileName';
 
 /// The game packed into the player's own bundle (web / Android exports), with
 /// its images and sounds embedded. Null when there is none.
@@ -61,7 +64,7 @@ EmberProject? _loadGame(List<String> args) {
   if (kIsWeb) return null;
   final candidates = [
     if (args.isNotEmpty) args.first,
-    '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}${GameExporter.gameFileName}',
+    '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}$emberGameFileName',
   ];
   for (final path in candidates) {
     final file = File(path);
@@ -103,7 +106,6 @@ class _EmberPlayerAppState extends State<EmberPlayerApp> {
     Input.bindHardwareKeyboard();
 
     final project = widget.project;
-    SaveData.instance.open(project?.name ?? 'Ember Demo');
     if (project != null) {
       // The game's Ember Scripts, before any scene starts
       EmberScripts.instance.loadAll(project.scripts);
@@ -141,7 +143,7 @@ class _EmberPlayerAppState extends State<EmberPlayerApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: widget.project?.name ?? 'Ember Game',
+      title: widget.project?.gameTitle ?? 'Ember Game',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121316),

@@ -13,19 +13,25 @@ import '../core/entity.dart';
 import '../core/event_bus.dart' show LogSeverity;
 import '../core/game_script.dart';
 import '../core/input.dart';
+import '../core/mouse_lock.dart';
 import '../core/save_data.dart';
 import '../core/scene.dart';
 import '../core/transform2d.dart';
 import '../core/transform3d.dart';
 import '../core/tween.dart';
+import '../subsystems/ai/enemy_ai3d.dart';
 import '../subsystems/ai/monster_ai.dart';
 import '../subsystems/audio/audio_component.dart';
 import '../subsystems/audio/audio_system.dart';
 import '../subsystems/combat/combat.dart';
 import '../subsystems/particles/particle_system.dart';
 import '../subsystems/physics/character_controller2d.dart';
+import '../subsystems/physics/character_controller3d.dart';
+import '../subsystems/physics/physics_world3d.dart';
 import '../subsystems/physics/rigid_body2d.dart';
 import '../subsystems/physics/tile_collision.dart';
+import '../subsystems/story/story_player.dart';
+import '../subsystems/three_d/components3d.dart';
 import '../subsystems/two_d/camera2d.dart';
 import '../subsystems/two_d/door.dart';
 import '../subsystems/two_d/flame_components.dart';
@@ -109,6 +115,50 @@ Vector2 _center(EmberEntity e) {
   return t3 == null ? Vector2.zero() : Vector2(t3.position.x, t3.position.y);
 }
 
+/// The 3D position of an entity with a Transform 3D (world space), or null.
+Vector3? _pos3(EmberEntity e) => e.getComponent<Transform3DComponent>()?.worldPosition;
+
+/// A Vec3 from a Vec3, a 3D entity, or a Vec2 (z = 0).
+Vector3 _vec3(Object? v, String what) {
+  if (v is Vector3) return v.clone();
+  if (v is EmberEntity) {
+    final p = _pos3(v);
+    if (p != null) return p;
+    final c = _center(v);
+    return Vector3(c.x, c.y, 0);
+  }
+  if (v is Vector2) return Vector3(v.x, v.y, 0);
+  throw ScriptArgumentError('$what should be a Vec3 (vec3(x, y, z)) or a 3D entity, not ${Interpreter.describe(v)}');
+}
+
+/// A 3D point from `(entityOrVec)` or `(x, y, z)` arguments starting at [i].
+Vector3 _point3(List<Object?> a, int i, String what) {
+  if (i < a.length && a[i] is num) return Vector3(_num(a, i, 'x'), _num(a, i + 1, 'y'), _num(a, i + 2, 'z'));
+  return _vec3(i < a.length ? a[i] : null, what);
+}
+
+/// True when [v] names a point in 3D (a Vec3 or an entity with a Transform 3D).
+bool _is3DPoint(Object? v) => v is Vector3 || (v is EmberEntity && v.hasComponent<Transform3DComponent>());
+
+/// Yaw (degrees) that makes a Transform 3D face along [d] (forward is -Z at yaw 0).
+double _yawToward(Vector3 d) => math.atan2(-d.x, -d.z) * 180 / math.pi;
+
+/// Smallest signed difference between two angles in degrees (-180..180).
+double _angleDelta(double from, double to) {
+  var d = (to - from) % 360;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
+}
+
+/// Where to put a spawned copy: a Vec3 / 3D entity in 3D, else a 2D point.
+Object? _spawnAt(List<Object?> a, int i) {
+  if (i >= a.length) return null;
+  if (_is3DPoint(a[i])) return _vec3(a[i], 'position');
+  if (a[i] is num && i + 2 < a.length && a[i + 2] is num) return _point3(a, i, 'position');
+  return _point(a, i, 'position');
+}
+
 EmberEntity _entity(Object? v, String what) {
   if (v is EmberEntity) return v;
   if (v is String) {
@@ -176,38 +226,47 @@ Object? fromScript(Object? v, Object? like) {
 /// Finds a component on [e] by type name ("Health", "Flame Sprite", "sprite", ...).
 EmberComponent? findComponent(EmberEntity e, String name) {
   final want = _norm(name);
-  final alias = _componentAliases[want];
+  final aliases = _componentAliases[want];
   for (final c in e.components) {
     final n = _norm(c.displayName);
-    if (n == want || n == alias || (alias == null && n.contains(want))) return c;
+    if (n == want || (aliases != null && aliases.contains(n))) return c;
+  }
+  if (aliases != null) return null;
+  for (final c in e.components) {
+    if (_norm(c.displayName).contains(want)) return c;
   }
   return null;
 }
 
-const _componentAliases = {
-  'sprite': 'flamesprite',
-  'hitbox': 'flamehitbox2d',
-  'body': 'flamehitbox2d',
-  'tilemap': 'flametilemap2d',
-  'controller': 'charactercontroller2d',
-  'platformer': 'charactercontroller2d',
-  'mover': 'topdowncontroller2d',
-  'topdown': 'topdowncontroller2d',
-  'ai': 'monsterai',
-  'text': 'uitext',
-  'bar': 'uibar',
-  'button': 'uibutton',
-  'image': 'uiimage',
-  'audio': 'audiosource',
-  'particles': 'particleemitter2d',
-  'camera': 'camera2d',
-  'animator': 'spriteanimator',
-  'transform': 'transform2d',
-  'rigidbody': 'rigidbody2d',
-  'rb': 'rigidbody2d',
-  'physics': 'rigidbody2d',
-  'joint': 'joint2d',
-  'line': 'line2d',
+/// Shortcut names for components. Several targets: the first one the entity has (2D or 3D).
+const Map<String, List<String>> _componentAliases = {
+  'controller': ['charactercontroller2d', 'charactercontroller3d'],
+  'platformer': ['charactercontroller2d'],
+  'particles': ['particleemitter2d', 'particleemitter3d'],
+  'camera': ['camera2d', 'camera'],
+  'transform': ['transform2d', 'transform3d'],
+  'rigidbody': ['rigidbody2d', 'rigidbody3d'],
+  'rb': ['rigidbody2d', 'rigidbody3d'],
+  'physics': ['rigidbody2d', 'rigidbody3d'],
+  'mesh': ['meshrenderer3d'],
+  'enemy': ['enemyai3d'],
+  'story': ['storyplayer'],
+  'projectile': ['projectile', 'projectile3d'],
+  'sprite': ['flamesprite'],
+  'hitbox': ['flamehitbox2d'],
+  'body': ['flamehitbox2d'],
+  'tilemap': ['flametilemap2d'],
+  'mover': ['topdowncontroller2d'],
+  'topdown': ['topdowncontroller2d'],
+  'ai': ['monsterai'],
+  'text': ['uitext'],
+  'bar': ['uibar'],
+  'button': ['uibutton'],
+  'image': ['uiimage'],
+  'audio': ['audiosource'],
+  'animator': ['spriteanimator'],
+  'joint': ['joint2d'],
+  'line': ['line2d'],
 };
 
 // Keyboard names: 'A', 'Space', 'Left', 'Enter', 'Shift', 'Escape', ...
@@ -289,6 +348,45 @@ class _Vec2Host extends HostType {
       throw ScriptArgumentError('vectors can\'t be changed in place — use v = vec(newX, v.y) or v.withX(newX)');
 }
 
+class _Vec3Host extends HostType {
+  @override
+  String get typeName => 'Vec3';
+  @override
+  bool matches(Object v) => v is Vector3;
+  @override
+  String describe(Object obj) => Interpreter.stringify(obj);
+  @override
+  List<String> memberNames(Object obj) => [for (final e in ScriptApi.members('Vec3')) e.name];
+
+  @override
+  Object? getMember(Object obj, String name) {
+    final v = obj as Vector3;
+    return switch (name) {
+      'x' => v.x,
+      'y' => v.y,
+      'z' => v.z,
+      'length' => v.length,
+      'flat' => Vector3(v.x, 0, v.z),
+      'normalized' => _fn(name, (_) => v.length2 == 0 ? Vector3.zero() : v.normalized()),
+      'distanceTo' => _fn(name, (a) => v.distanceTo(_point3(a, 0, 'other'))),
+      'dot' => _fn(name, (a) => v.dot(_vec3(a[0], 'other'))),
+      'cross' => _fn(name, (a) => v.cross(_vec3(a[0], 'other'))),
+      'lerp' => _fn(name, (a) {
+          final o = _vec3(a[0], 'other'), t = _num(a, 1, 't');
+          return v + (o - v) * t;
+        }),
+      'withX' => _fn(name, (a) => Vector3(_num(a, 0, 'x'), v.y, v.z)),
+      'withY' => _fn(name, (a) => Vector3(v.x, _num(a, 0, 'y'), v.z)),
+      'withZ' => _fn(name, (a) => Vector3(v.x, v.y, _num(a, 0, 'z'))),
+      _ => missing,
+    };
+  }
+
+  @override
+  bool setMember(Object obj, String name, Object? value) =>
+      throw ScriptArgumentError('vectors can\'t be changed in place — use v = vec3(newX, v.y, v.z) or v.withX(newX)');
+}
+
 class _EntityHost extends HostType {
   @override
   String get typeName => 'Entity';
@@ -322,11 +420,51 @@ class _EntityHost extends HostType {
       case 'z':
         return t3?.position.z ?? 0.0;
       case 'position':
-        return t2 != null ? t2.position.clone() : Vector2(t3?.position.x ?? 0, t3?.position.y ?? 0);
+        if (t3 != null) return t3.position.clone();
+        return t2 != null ? t2.position.clone() : Vector2.zero();
+      case 'worldPosition':
+        return t3?.worldPosition ?? (t2 != null ? t2.worldPosition.clone() : Vector2.zero());
+      case 'yaw':
+        return t3?.euler.y ?? 0.0;
+      case 'pitch':
+        return t3?.euler.x ?? 0.0;
+      case 'roll':
+        return t3?.euler.z ?? 0.0;
+      case 'forward':
+        return t3?.forward ?? Vector3(0, 0, -1);
+      case 'right':
+        return t3?.right ?? Vector3(1, 0, 0);
+      case 'up':
+        return t3?.up ?? Vector3(0, 1, 0);
+      case 'lookAt':
+        return _fn(name, (a) {
+          if (t3 == null) return null;
+          final d = _point3(a, 0, 'target') - t3.worldPosition;
+          if (d.length2 == 0) return null;
+          final level = optArg<bool>(a, a.isNotEmpty && a[0] is num ? 3 : 1, 'level', true);
+          final pitch = level ? t3.euler.x : math.atan2(d.y, math.sqrt(d.x * d.x + d.z * d.z)) * 180 / math.pi;
+          t3.euler = Vector3(pitch, _yawToward(d), t3.euler.z);
+          return null;
+        });
+      case 'turnToward':
+        return _fn(name, (a) {
+          if (t3 == null) return 0.0;
+          final d = _point3(a, 0, 'target') - t3.worldPosition;
+          final maxStep = _num(a, a.isNotEmpty && a[0] is num ? 3 : 1, 'maxDegrees');
+          if (d.x * d.x + d.z * d.z < 1e-9) return 0.0;
+          final delta = _angleDelta(t3.euler.y, _yawToward(d));
+          final step = delta.clamp(-maxStep, maxStep);
+          t3.euler = Vector3(t3.euler.x, t3.euler.y + step, t3.euler.z);
+          return (delta - step).abs();
+        });
       case 'center':
         return _center(e);
       case 'rotation':
         return t2?.rotation ?? 0.0;
+      case 'layer':
+        return t2?.zIndex ?? 0;
+      case 'scale':
+        return t2?.scale.clone() ?? Vector2(1, 1);
       case 'width':
         return t2?.size.x ?? 0.0;
       case 'height':
@@ -385,14 +523,30 @@ class _EntityHost extends HostType {
           return null;
         });
       case 'distanceTo':
-        return _fn(name, (a) => _center(e).distanceTo(_point(a, 0, 'target')));
+        return _fn(name, (a) {
+          if (t3 != null && (a.isEmpty || _is3DPoint(a[0]) || (a.length > 2 && a[2] is num))) {
+            return t3.worldPosition.distanceTo(_point3(a, 0, 'target'));
+          }
+          return _center(e).distanceTo(_point(a, 0, 'target'));
+        });
       case 'directionTo':
         return _fn(name, (a) {
+          if (t3 != null && (a.isEmpty || _is3DPoint(a[0]) || (a.length > 2 && a[2] is num))) {
+            final d = _point3(a, 0, 'target') - t3.worldPosition;
+            return d.length2 == 0 ? Vector3.zero() : d.normalized();
+          }
           final d = _point(a, 0, 'target') - _center(e);
           return d.length2 == 0 ? Vector2.zero() : d.normalized();
         });
       case 'moveToward':
         return _fn(name, (a) {
+          if (t3 != null && (a.isEmpty || _is3DPoint(a[0]) || (a.length > 3 && a[2] is num))) {
+            final target = _point3(a, 0, 'target');
+            final step = _num(a, a.isNotEmpty && a[0] is num ? 3 : 1, 'maxDistance');
+            final d = target - t3.worldPosition;
+            t3.position = t3.position + (d.length <= step ? d : d.normalized() * step);
+            return d.length <= step;
+          }
           final target = _point(a, 0, 'target');
           final step = _num(a, a.isNotEmpty && a[0] is num ? 2 : 1, 'maxDistance');
           final d = target - _center(e);
@@ -417,7 +571,7 @@ class _EntityHost extends HostType {
           return result;
         });
       case 'clone':
-        return _fn(name, (a) => spawnCopy(e, a.isEmpty ? null : _point(a, 0, 'position')));
+        return _fn(name, (a) => spawnCopy(e, _spawnAt(a, 0)));
       case 'interact':
         return _fn(name, (a) {
           final s = e.scene;
@@ -458,14 +612,26 @@ class _EntityHost extends HostType {
       case 'z':
         if (t3 != null) t3.position = Vector3(t3.position.x, t3.position.y, n());
       case 'position':
-        final v = _vec(value, 'position');
-        if (t2 != null) t2.position = v;
-        if (t3 != null) t3.position = Vector3(v.x, v.y, t3.position.z);
+        if (t3 != null) {
+          t3.position = value is Vector3 ? value.clone() : Vector3(_vec(value, 'position').x, _vec(value, 'position').y, t3.position.z);
+        } else if (t2 != null) {
+          t2.position = _vec(value, 'position');
+        }
+      case 'yaw':
+        if (t3 != null) t3.euler = Vector3(t3.euler.x, n(), t3.euler.z);
+      case 'pitch':
+        if (t3 != null) t3.euler = Vector3(n(), t3.euler.y, t3.euler.z);
+      case 'roll':
+        if (t3 != null) t3.euler = Vector3(t3.euler.x, t3.euler.y, n());
       case 'center':
         final v = _vec(value, 'center');
         if (t2 != null) t2.position = t2.position + (v - _center(e));
       case 'rotation':
         t2?.rotation = n();
+      case 'layer':
+        t2?.zIndex = n().round();
+      case 'scale':
+        if (t2 != null) t2.scale = value is num ? Vector2.all(value.toDouble()) : _vec(value, 'scale');
       case 'width':
         if (t2 != null) t2.size = Vector2(n(), t2.size.y);
       case 'height':
@@ -550,15 +716,18 @@ class _ComponentHost extends HostType {
     'damage': ((c) => c is HealthComponent, (c, n) => _fn(n, (a) => (c as HealthComponent).damage(
           _num(a, 0, 'amount'),
           source: a.length > 1 && a[1] != null ? _entity(a[1], 'source') : _self,
-          knockback: a.length > 2 && a[2] != null ? _vec(a[2], 'knockback') : null,
+          knockback: a.length > 2 && a[2] != null && a[2] is! Vector3 ? _vec(a[2], 'knockback') : null,
+          push: a.length > 2 && a[2] is Vector3 ? a[2] as Vector3 : null,
         )), null),
     'heal': ((c) => c is HealthComponent, (c, n) => _fn(n, (a) {
           (c as HealthComponent).heal(_num(a, 0, 'amount'));
           return null;
         }), null),
     // Top-down movement
-    'move': ((c) => c is TopDownController2DComponent || c is CharacterController2DComponent, (c, n) => _fn(n, (a) {
-          if (c is TopDownController2DComponent) {
+    'move': ((c) => c is TopDownController2DComponent || c is CharacterController2DComponent || c is CharacterController3DComponent, (c, n) => _fn(n, (a) {
+          if (c is CharacterController3DComponent) {
+            c.move(a.isEmpty ? Vector3.zero() : _vec3(a[0], 'direction'), optArg<bool>(a, 1, 'sprint', false), _lib.dt);
+          } else if (c is TopDownController2DComponent) {
             c.move(a.isEmpty ? Vector2.zero() : _point(a, 0, 'direction'), _lib.dt);
           } else {
             final cc = c as CharacterController2DComponent;
@@ -572,13 +741,18 @@ class _ComponentHost extends HostType {
           }
           return null;
         }), null),
-    'velocity': ((c) => c is TopDownController2DComponent || c is CharacterController2DComponent || c is RigidBody2DComponent,
+    'velocity': ((c) => c is TopDownController2DComponent || c is CharacterController2DComponent || c is RigidBody2DComponent || c is CharacterController3DComponent,
         (c, _) => switch (c) {
+              CharacterController3DComponent() => c.velocity.clone(),
               TopDownController2DComponent() => c.velocity.clone(),
               RigidBody2DComponent() => c.velocity,
               _ => (c as CharacterController2DComponent).velocity.clone(),
             },
         (c, v) {
+          if (c is CharacterController3DComponent) {
+            c.velocity.setFrom(_vec3(v, 'velocity'));
+            return;
+          }
           final vv = _vec(v, 'velocity');
           if (c is TopDownController2DComponent) c.velocity.setFrom(vv);
           if (c is CharacterController2DComponent) c.velocity.setFrom(vv);
@@ -642,18 +816,39 @@ class _ComponentHost extends HostType {
           return null;
         }), null),
     // Platformer
-    'grounded': ((c) => c is CharacterController2DComponent, (c, _) => (c as CharacterController2DComponent).isGrounded, null),
+    'grounded': ((c) => c is CharacterController2DComponent || c is CharacterController3DComponent,
+        (c, _) => c is CharacterController3DComponent ? c.isGrounded : (c as CharacterController2DComponent).isGrounded, null),
     'canJump': ((c) => c is CharacterController2DComponent, (c, _) => (c as CharacterController2DComponent).canJump, null),
     'bounce': ((c) => c is CharacterController2DComponent, (c, n) => _fn(n, (a) {
           final cc = c as CharacterController2DComponent;
           cc.bounce(optArg<num>(a, 0, 'strength', cc.jumpVelocity).toDouble());
           return null;
         }), null),
+    // Story Player
+    'variable': ((c) => c is StoryPlayerComponent, (c, n) => _fn(n, (a) => (c as StoryPlayerComponent).vars[arg<String>(a, 0, 'name')]), null),
+    'setVariable': ((c) => c is StoryPlayerComponent, (c, n) => _fn(n, (a) {
+          (c as StoryPlayerComponent).vars[arg<String>(a, 0, 'name')] = a.length > 1 ? a[1] : null;
+          return null;
+        }), null),
+    'jump': ((c) => c is StoryPlayerComponent || c is CharacterController3DComponent, (c, n) => _fn(n, (a) {
+          if (c is CharacterController3DComponent) return c.jump();
+          (c as StoryPlayerComponent).jump(arg<String>(a, 0, 'label'));
+          return null;
+        }), null),
+    'label': ((c) => c is StoryPlayerComponent, (c, _) => (c as StoryPlayerComponent).label, null),
+    'ended': ((c) => c is StoryPlayerComponent, (c, _) => (c as StoryPlayerComponent).ended, null),
+    'speaker': ((c) => c is StoryPlayerComponent, (c, _) => (c as StoryPlayerComponent).speaker, null),
+    // 3D meshes
+    'flash': ((c) => c is MeshRenderer3DComponent, (c, n) => _fn(n, (a) {
+          (c as MeshRenderer3DComponent).flash(
+              a.isNotEmpty && a[0] != null ? _colorFromScript(a[0]) : const Color(0xFFFFFFFF), optArg<num>(a, 1, 'seconds', 0.12).toDouble());
+          return null;
+        }), null),
     // Effects & sound
     'burst': ((c) => c is ParticleEmitter2DComponent || c is ParticleEmitter3DComponent, (c, n) => _fn(n, (a) {
           final count = optArg<num>(a, 0, 'count', 20).round();
           if (c is ParticleEmitter3DComponent) {
-            c.burst(count);
+            c.burst(count, a.length > 1 ? _vec3(a[1], 'position') : null);
           } else {
             (c as ParticleEmitter2DComponent).burst(count, a.length > 1 ? _vec(a[1], 'position') : null);
           }
@@ -675,7 +870,9 @@ class _ComponentHost extends HostType {
     'count': ((c) => c is UIImageComponent, (c, _) => (c as UIImageComponent).count, (c, v) => (c as UIImageComponent).count = (v as num).round()),
     'filled': ((c) => c is UIImageComponent, (c, _) => (c as UIImageComponent).filled, (c, v) => (c as UIImageComponent).filled = (v as num).round()),
     // Monster AI
-    'state': ((c) => c is MonsterAIComponent, (c, _) => (c as MonsterAIComponent).state.name, null),
+    'state': ((c) => c is MonsterAIComponent || c is EnemyAI3DComponent,
+        (c, _) => c is EnemyAI3DComponent ? c.state : (c as MonsterAIComponent).state.name, null),
+    'target': ((c) => c is EnemyAI3DComponent, (c, _) => (c as EnemyAI3DComponent).target, null),
     'shoot': ((c) => c is MonsterAIComponent, (c, n) => _fn(n, (a) {
           final ai = c as MonsterAIComponent;
           final e = ai.entity;
@@ -795,6 +992,14 @@ class _InputHost extends HostType {
         'click' => Input.isMouseButtonJustPressed(0),
         'mouseDown' => Input.isMouseButtonPressed(0),
         'mouseReleased' => Input.isMouseButtonJustReleased(0),
+        'mouseDelta' => Input.mouseDelta.clone(),
+        'mouseLocked' => MouseLock.locked,
+        'lockMouse' => _fn(name, (a) {
+            final on = optArg<bool>(a, 0, 'on', true);
+            MouseLock.wanted = on;
+            if (!on) MouseLock.unlock();
+            return null;
+          }),
         _ => missing,
       };
 }
@@ -817,7 +1022,24 @@ class _PhysicsHost extends HostType {
         'gravity' => _world.gravity,
         'settled' => _world.settled,
         'moving' => _world.awakeCount,
-        'raycast' => _fn(name, (a) => _world.raycast(_vec(a.isEmpty ? null : a[0], 'from'), _vec(a.length > 1 ? a[1] : null, 'to'))),
+        'raycast' => _fn(name, (a) {
+            if (a.isNotEmpty && _is3DPoint(a[0])) {
+              final from = _vec3(a[0], 'from'), to = _vec3(a.length > 1 ? a[1] : null, 'to');
+              final ignore = a.length > 2 && a[2] is EmberEntity ? a[2] as EmberEntity : (a[0] is EmberEntity ? a[0] as EmberEntity : null);
+              final d = to - from;
+              if (d.length2 == 0) return null;
+              return PhysicsWorld3D.raycast(scene: _scene, origin: from, direction: d, maxDistance: d.length, ignoreEntity: ignore);
+            }
+            return _world.raycast(_vec(a.isEmpty ? null : a[0], 'from'), _vec(a.length > 1 ? a[1] : null, 'to'));
+          }),
+        'lineOfSight' => _fn(name, (a) {
+            final from = _vec3(a.isEmpty ? null : a[0], 'from'), to = _vec3(a.length > 1 ? a[1] : null, 'to');
+            final d = to - from;
+            if (d.length2 == 0) return true;
+            final ignore = a.length > 2 && a[2] is EmberEntity ? a[2] as EmberEntity : (a[0] is EmberEntity ? a[0] as EmberEntity : null);
+            final hit = PhysicsWorld3D.raycast(scene: _scene, origin: from, direction: d, maxDistance: d.length, ignoreEntity: ignore);
+            return hit == null || (a.length > 1 && identical(hit.entity, a[1]));
+          }),
         'entitiesAt' => _fn(name, (a) => _world.entitiesAt(_point(a, 0, 'point'))),
         'explode' => _fn(name, (a) {
             final at = _point(a, 0, 'center');
@@ -851,6 +1073,26 @@ class _RayHitHost extends HostType {
       'point' => h.point.clone(),
       'normal' => h.normal.clone(),
       'fraction' => h.fraction,
+      _ => missing,
+    };
+  }
+}
+
+class _RayHit3DHost extends HostType {
+  @override
+  String get typeName => 'RayHit3D';
+  @override
+  bool matches(Object v) => v is RaycastHit3D;
+  @override
+  String describe(Object obj) => 'RayHit3D(${(obj as RaycastHit3D).entity.name})';
+  @override
+  Object? getMember(Object obj, String name) {
+    final h = obj as RaycastHit3D;
+    return switch (name) {
+      'entity' => h.entity,
+      'point' => h.point.clone(),
+      'normal' => h.normal.clone(),
+      'distance' => h.distance,
       _ => missing,
     };
   }
@@ -900,8 +1142,27 @@ class _GameHost extends HostType {
 // ---------------------------------------------------------------------------
 // Spawning
 
+/// 2D entities whose box (hitbox, else Transform 2D box) contains a point,
+/// top-most first (highest layer, then the one added last). Args: (point, tag?).
+List<EmberEntity> _pickAll(List<Object?> a) {
+  final p = _point(a, 0, 'point');
+  final tagIndex = a.isNotEmpty && a[0] is num ? 2 : 1;
+  final tag = tagIndex < a.length && a[tagIndex] is String ? a[tagIndex] as String : null;
+  final hits = <(EmberEntity, int, int)>[];
+  var order = 0;
+  for (final e in _scene.allEntities) {
+    order++;
+    if (!e.activeInHierarchy || (tag != null && !e.tags.contains(tag))) continue;
+    final t = e.getComponent<Transform2DComponent>();
+    if (t == null) continue;
+    if (Combat.bodyOf(e).contains(Offset(p.x, p.y))) hits.add((e, t.zIndex, order));
+  }
+  hits.sort((x, y) => x.$2 != y.$2 ? y.$2.compareTo(x.$2) : y.$3.compareTo(x.$3));
+  return [for (final h in hits) h.$1];
+}
+
 /// Copies [template] (e.g. a disabled "Bullet" entity used as a prefab) into the scene.
-EmberEntity spawnCopy(EmberEntity template, Vector2? at) {
+EmberEntity spawnCopy(EmberEntity template, Object? at) {
   final copy = template.clone();
   // Spawned copies keep the template's names (scripts compare other.name), unlike Ctrl+D copies
   void rename(EmberEntity from, EmberEntity to) {
@@ -914,9 +1175,10 @@ EmberEntity spawnCopy(EmberEntity template, Vector2? at) {
   rename(template, copy);
   copy.enabled = true;
   final t = copy.getComponent<Transform2DComponent>();
-  if (at != null && t != null) t.position = at;
+  if (at is Vector2 && t != null) t.position = at;
   final t3 = copy.getComponent<Transform3DComponent>();
-  if (at != null && t3 != null) t3.position = Vector3(at.x, at.y, t3.position.z);
+  if (at is Vector3 && t3 != null) t3.position = at.clone();
+  if (at is Vector2 && t3 != null) t3.position = Vector3(at.x, at.y, t3.position.z);
   _scene.addEntity(copy);
   return copy;
 }
@@ -930,7 +1192,7 @@ void registerScriptApi() {
   if (_registered) return;
   _registered = true;
   Interpreter.hostTypes.addAll([
-    _Vec2Host(), _EntityHost(), _ScriptVarsHost(), _TileHitHost(), _RayHitHost(), _InputHost(), _GameHost(), _PhysicsHost(), _ComponentHost(),
+    _Vec2Host(), _Vec3Host(), _RayHit3DHost(), _EntityHost(), _ScriptVarsHost(), _TileHitHost(), _RayHitHost(), _InputHost(), _GameHost(), _PhysicsHost(), _ComponentHost(),
   ]);
 
   final g = Interpreter.globals;
@@ -945,6 +1207,7 @@ void registerScriptApi() {
     EmberEngine.instance.log(a.map(Interpreter.stringify).join(' '), severity: LogSeverity.warning, source: _lib.current?.file ?? 'Script');
     return null;
   });
+  g['vec3'] = _fn('vec3', (a) => Vector3(optArg<num>(a, 0, 'x', 0).toDouble(), optArg<num>(a, 1, 'y', 0).toDouble(), optArg<num>(a, 2, 'z', 0).toDouble()));
   g['vec'] = _fn('vec', (a) => Vector2(optArg<num>(a, 0, 'x', 0).toDouble(), optArg<num>(a, 1, 'y', 0).toDouble()));
   g['Input'] = const InputApi();
   g['Game'] = const GameApi();
@@ -989,6 +1252,11 @@ void registerScriptApi() {
     final tag = arg<String>(a, 0, 'tag');
     return [for (final e in _scene.allEntities) if (e.enabled && e.tags.contains(tag)) e];
   });
+  g['pick'] = _fn('pick', (a) {
+    final hits = _pickAll(a);
+    return hits.isEmpty ? null : hits.first;
+  });
+  g['pickAll'] = _fn('pickAll', _pickAll);
   g['findNearest'] = _fn('findNearest', (a) {
     final tag = arg<String>(a, 0, 'tag');
     final from = a.length > 1 ? _point(a, 1, 'from') : (_self == null ? Vector2.zero() : _center(_self!));
@@ -1006,7 +1274,7 @@ void registerScriptApi() {
   });
   g['spawn'] = _fn('spawn', (a) {
     final template = _entity(a.isEmpty ? null : a[0], 'template');
-    return spawnCopy(template, a.length > 1 ? _point(a, 1, 'position') : null);
+    return spawnCopy(template, _spawnAt(a, 1));
   });
   g['destroy'] = _fn('destroy', (a) {
     final e = a.isEmpty || a[0] == null ? _self : _entity(a[0], 'entity');
@@ -1153,6 +1421,8 @@ void registerScriptApi() {
     final fallback = a.length > 1 ? a[1] : null;
     if (!SaveData.instance.has(key)) return fallback;
     return switch (fallback) {
+      // double first: on the web a whole-number fallback is also a double
+      double() when Interpreter.webNumbers => SaveData.instance.getDouble(key, defaultValue: fallback),
       int() => SaveData.instance.getInt(key, defaultValue: fallback),
       double() => SaveData.instance.getDouble(key, defaultValue: fallback),
       bool() => SaveData.instance.getBool(key, defaultValue: fallback),
@@ -1196,9 +1466,10 @@ void _registerDocs() {
     ('print(value, ...)', 'Writes to the Console.'),
     ('warn(value, ...)', 'Writes a warning to the Console.'),
     ('vec(x, y)', 'A 2D vector / point, e.g. vec(100, 50). Add, subtract, multiply by numbers.'),
+    ('vec3(x, y, z)', 'A 3D vector / point, e.g. vec3(0, 1, -5). Add, subtract, multiply by numbers.'),
     ('Input', 'Keyboard, mouse and actions — see Input.'),
     ('Game', 'Time, time scale and the current level — see Game.'),
-    ('Physics', 'Gravity, raycasts and explosions for Rigid Body 2D — see Physics.'),
+    ('Physics', 'Gravity, raycasts and explosions (2D), raycasts and line of sight (3D) — see Physics.'),
   ]);
   ScriptApi._add('', 'Math', [
     ('random()', 'A random number from 0 to 1.'),
@@ -1226,6 +1497,8 @@ void _registerDocs() {
     ('find(name)', 'The entity with this name, or null.'),
     ('findAll(tag)', 'All enabled entities with this tag.'),
     ('findNearest(tag)', 'The closest entity with this tag (optionally findNearest(tag, from)).'),
+    ('pick(point, tag)', '2D: the top-most entity under a point (e.g. pick(Input.mouse, "card")), or null.'),
+    ('pickAll(point, tag)', '2D: every entity under a point, top-most first.'),
     ('solidAt(point)', 'true if a solid tile covers this point (walls, water, trees). solidAt(x, y, size) checks a square.'),
     ('spawn(template, position)', 'Copies an entity (e.g. a disabled "Bullet" prefab) to a position and returns the copy.'),
     ('destroy(entity)', 'Removes an entity at the end of the frame. destroy() removes self.'),
@@ -1255,9 +1528,21 @@ void _registerDocs() {
     ('name', 'The entity\'s name (can be changed).'),
     ('x', 'Horizontal position.'),
     ('y', 'Vertical position (down is positive in 2D).'),
-    ('position', 'Position as a Vec2.'),
+    ('z', 'Depth position (3D).'),
+    ('position', 'Position: a Vec2 in 2D, a Vec3 in 3D (relative to its parent).'),
+    ('worldPosition', 'Position in the world (after parents).'),
+    ('yaw', '3D: turn left/right in degrees (0 faces -Z, 90 faces -X).'),
+    ('pitch', '3D: tilt up/down in degrees.'),
+    ('roll', '3D: lean sideways in degrees.'),
+    ('forward', '3D: unit Vec3 it faces.'),
+    ('right', '3D: unit Vec3 to its right.'),
+    ('up', '3D: unit Vec3 above it.'),
+    ('lookAt(target, level)', '3D: face a point or entity (level = true keeps it upright, the default).'),
+    ('turnToward(target, maxDegrees)', '3D: turn at most maxDegrees toward a target; returns the angle still left.'),
     ('center', 'Middle of its hitbox (or box) as a Vec2; can be set.'),
     ('rotation', 'Rotation in radians (2D).'),
+    ('layer', '2D draw order: higher layers are drawn on top (and picked first).'),
+    ('scale', '2D size multiplier: a number or a Vec2 (1 = normal).'),
     ('width', 'Box width.'),
     ('height', 'Box height.'),
     ('enabled', 'false hides it and stops its scripts.'),
@@ -1271,8 +1556,8 @@ void _registerDocs() {
     ('add(component)', 'Adds a new component by type, e.g. self.add("Health").'),
     ('remove(component)', 'Removes a component.'),
     ('destroy(delay)', 'Removes the entity (optionally after a delay in seconds).'),
-    ('distanceTo(other)', 'Distance to another entity or Vec2.'),
-    ('directionTo(other)', 'Unit Vec2 pointing at another entity or Vec2.'),
+    ('distanceTo(other)', 'Distance to another entity or point (Vec2, or Vec3 in 3D).'),
+    ('directionTo(other)', 'Unit vector pointing at another entity or point (Vec3 in 3D).'),
     ('moveToward(target, maxDistance)', 'Steps toward a point; returns true when arrived.'),
     ('overlaps(other)', 'true if the hitboxes touch.'),
     ('interact(range)', 'Talks to / uses the nearest entity within range (opens its Dialogue, sends it onInteract). Returns it or null.'),
@@ -1286,7 +1571,10 @@ void _registerDocs() {
     ('animator', 'Its Sprite Animator (play("run"), current, finished).'),
     ('health', 'Its Health (health, maxHealth, damage(n), heal(n), dead).'),
     ('mover', 'Its Top-Down Controller (move(dir), velocity, facing, knockback(v)).'),
-    ('controller', 'Its Platformer Controller (move(x, jumpHeld, jumpPressed), grounded, bounce()).'),
+    ('controller', 'Its Platformer Controller (move(x, jumpHeld, jumpPressed), grounded, bounce()), or in 3D its Character Controller 3D (move(dir), jump(), grounded).'),
+    ('mesh', 'Its Mesh Renderer 3D (color, emission, opacity, flash()).'),
+    ('enemy', 'Its Enemy AI 3D (target, state, speed, …).'),
+    ('story', 'Its Story Player (variable(name), setVariable(name, value), jump(label), label, ended, speaker).'),
     ('hitbox', 'Its Hitbox 2D.'),
     ('particles', 'Its Particle Emitter (burst(20), burst(20, position)).'),
     ('rigidbody', 'Its Rigid Body 2D (velocity, angularVelocity, applyImpulse(v), mass, sleeping).'),
@@ -1355,6 +1643,29 @@ void _registerDocs() {
     ('raycast(from, to)', 'The first body on the line: a RayHit (entity, point, normal) or null.'),
     ('entitiesAt(point)', 'Entities whose rigid body covers this point.'),
     ('explode(center, radius, strength)', 'Pushes every body within radius away (strongest at the centre); returns them.'),
+    ('raycast(from, to, ignore)', '3D (Vec3 points): the first collider on the line, a RayHit3D (entity, point, normal, distance), or null.'),
+    ('lineOfSight(from, to, ignore)', '3D: true if nothing solid is between two points (or the first thing hit is the target entity).'),
+  ]);
+  ScriptApi._add('Vec3', 'Vec3', [
+    ('x', 'Left/right part.'),
+    ('y', 'Up/down part.'),
+    ('z', 'Forward/back part (-Z is forward).'),
+    ('length', 'Length of the vector.'),
+    ('flat', 'Copy with y = 0 (along the ground).'),
+    ('normalized()', 'Same direction, length 1.'),
+    ('distanceTo(other)', 'Distance to another point.'),
+    ('dot(other)', 'Dot product.'),
+    ('cross(other)', 'Cross product.'),
+    ('lerp(other, t)', 'Blend toward another vector.'),
+    ('withX(x)', 'Copy with a new x.'),
+    ('withY(y)', 'Copy with a new y.'),
+    ('withZ(z)', 'Copy with a new z.'),
+  ]);
+  ScriptApi._add('RayHit3D', 'RayHit3D', [
+    ('entity', 'The entity hit.'),
+    ('point', 'Where the ray hit (Vec3).'),
+    ('normal', 'Surface direction at the hit (Vec3).'),
+    ('distance', 'How far from the start.'),
   ]);
   ScriptApi._add('RayHit', 'RayHit', [
     ('entity', 'The entity that was hit.'),

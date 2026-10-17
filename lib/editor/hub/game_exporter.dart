@@ -1,8 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'android_signing.dart';
+import 'game_icons.dart';
 import 'project_manifest.dart';
 import 'project_package.dart';
+import 'windows_branding.dart';
+import 'zip_writer.dart';
 
 /// Packages a project as a standalone game.
 ///
@@ -12,7 +16,7 @@ import 'project_package.dart';
 /// file on start-up, so one runtime build can ship any number of games.
 class GameExporter {
   /// The game file the player runtime looks for beside its executable.
-  static const String gameFileName = 'game.emberpkg.json';
+  static const String gameFileName = emberGameFileName;
 
   /// Where [buildPlayerRuntime] leaves the runtime inside the engine repo.
   static const String runtimeDirName = 'build/player_runtime';
@@ -96,15 +100,18 @@ class GameExporter {
   }
 
   /// Writes a standalone copy of [project] into `<outputParent>/<GameName>/`
-  /// and returns the path of the game executable.
+  /// and returns the path of the game executable. On Windows the executable
+  /// gets the game's name, version, publisher and [icons], and the Visual C++
+  /// runtime is bundled so it starts on PCs without it.
   static Future<String> export({
     required EmberProject project,
     required Directory runtime,
     required String outputParent,
+    GameIconSet? icons,
+    void Function(String line)? onLog,
   }) async {
     final sep = Platform.pathSeparator;
-    final gameName = project.name.trim().replaceAll(RegExp(r'[\\/:*?"<>|]'), '').trim();
-    final safeName = gameName.isEmpty ? 'EmberGame' : gameName;
+    final safeName = GameExporter.safeName(project.gameTitle);
     final outDir = Directory('$outputParent$sep$safeName');
     if (await outDir.exists()) await outDir.delete(recursive: true);
     await _copyDirectory(runtime, outDir);
@@ -117,6 +124,17 @@ class GameExporter {
       await File(exePath).rename(renamed);
       exePath = renamed;
     }
+    if (Platform.isWindows) {
+      try {
+        WindowsBranding.brand(File(exePath), ico: icons?.toIco(), identity: exeIdentity(project, '$safeName$ext'));
+        onLog?.call('Game executable: ${project.gameTitle} ${project.version} (build ${project.game.buildNumber}) by ${project.publisherName}');
+      } catch (e) {
+        // The game still runs; it just keeps the Ember Engine icon and name
+        onLog?.call('Warning: could not write the game icon and name into the .exe ($e)');
+      }
+      final dlls = WindowsBranding.bundleVcRuntime(outDir);
+      if (dlls.isNotEmpty) onLog?.call('Bundled ${dlls.join(', ')} (runs without installing the Visual C++ Redistributable)');
+    }
 
     await File('${outDir.path}$sep$gameFileName')
         .writeAsString(ProjectPackageManager.exportToPackageString(project), flush: true);
@@ -127,6 +145,120 @@ class GameExporter {
       await _copyDirectory(assets, Directory('${outDir.path}${sep}assets'));
     }
     return exePath;
+  }
+
+  /// What the exported .exe says about itself.
+  static ExeIdentity exeIdentity(EmberProject project, String fileName) => ExeIdentity(
+        productName: project.gameTitle,
+        description: project.gameTitle,
+        company: project.publisherName,
+        copyright: 'Copyright (C) ${DateTime.now().year} ${project.publisherName}',
+        version: GameSettings.isValidVersion(project.version) ? project.version : '1.0.0',
+        build: project.game.buildNumber,
+        originalFilename: fileName,
+      );
+
+  /// Zips an exported game folder as `<folder>.zip` beside it (the game folder at the zip's root).
+  static Future<String> zipGameFolder(String folder) async {
+    final dir = Directory(folder);
+    final name = dir.uri.pathSegments.where((s) => s.isNotEmpty).last;
+    final zip = File('${dir.parent.path}${Platform.pathSeparator}$name.zip');
+    await ZipWriter.zipFolder(dir, zip, prefix: name);
+    return zip.path;
+  }
+
+  // --- Windows installer (Inno Setup) ---
+
+  /// Inno Setup's command-line compiler, if installed (free: jrsoftware.org).
+  static String? findInnoCompiler() {
+    if (!Platform.isWindows) return null;
+    final env = Platform.environment;
+    // "Inno Setup 7", "Inno Setup 6", ...: the newest one wins
+    for (final base in [env['ProgramFiles'], env['ProgramFiles(x86)'], if (env['LOCALAPPDATA'] != null) '${env['LOCALAPPDATA']}\\Programs']) {
+      if (base == null) continue;
+      final dirs = <Directory>[];
+      try {
+        dirs.addAll(Directory(base).listSync().whereType<Directory>().where((d) => d.path.split('\\').last.toLowerCase().startsWith('inno setup')));
+      } catch (_) {}
+      dirs.sort((a, b) => b.path.toLowerCase().compareTo(a.path.toLowerCase()));
+      for (final d in dirs) {
+        final f = File('${d.path}\\ISCC.exe');
+        if (f.existsSync()) return f.path;
+      }
+    }
+    for (final dir in (env['PATH'] ?? '').split(';')) {
+      final f = File('$dir\\ISCC.exe');
+      if (dir.isNotEmpty && f.existsSync()) return f.path;
+    }
+    return null;
+  }
+
+  /// An Inno Setup script that installs [gameFolder] for the current user
+  /// (no admin needed) with a Start-menu shortcut and an uninstaller.
+  static String installerScript(EmberProject project, String gameFolder, {String? iconPath}) {
+    String q(String s) => s.replaceAll('"', "'");
+    final title = q(project.gameTitle);
+    final exe = '${safeName(project.gameTitle)}.exe';
+    // A stable id per game (from its app id) so updates replace the old install
+    final appId = (project.game.appId.isNotEmpty ? project.game.appId : androidAppId(project.gameTitle)).replaceAll('.', '_');
+    return [
+      '; Installer for $title, made by Ember Engine. Build it with Inno Setup (ISCC.exe).',
+      '[Setup]',
+      'AppId=$appId',
+      'AppName=$title',
+      'AppVersion=${project.version}',
+      'AppPublisher=${q(project.publisherName)}',
+      'DefaultDirName={autopf}\\$title',
+      'DefaultGroupName=$title',
+      'DisableProgramGroupPage=yes',
+      'PrivilegesRequired=lowest',
+      'PrivilegesRequiredOverridesAllowed=dialog',
+      'OutputDir=.',
+      'OutputBaseFilename=${q(safeName(project.gameTitle))} Setup',
+      'Compression=lzma2',
+      'SolidCompression=yes',
+      'WizardStyle=modern',
+      'UninstallDisplayIcon={app}\\$exe',
+      if (iconPath != null) 'SetupIconFile=$iconPath',
+      '',
+      '[Tasks]',
+      'Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked',
+      '',
+      '[Files]',
+      'Source: "$gameFolder\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs',
+      '',
+      '[Icons]',
+      'Name: "{group}\\$title"; Filename: "{app}\\$exe"',
+      'Name: "{autodesktop}\\$title"; Filename: "{app}\\$exe"; Tasks: desktopicon',
+      '',
+      '[Run]',
+      'Filename: "{app}\\$exe"; Description: "{cm:LaunchProgram,$title}"; Flags: nowait postinstall skipifsilent',
+      '',
+    ].join('\r\n');
+  }
+
+  /// Writes `<Game> Setup.iss` beside the exported folder and, when Inno Setup
+  /// is installed, compiles `<Game> Setup.exe`. Returns (script, setup exe or null).
+  static Future<(String, String?)> buildInstaller(EmberProject project, String gameFolder, {GameIconSet? icons, void Function(String line)? onLog}) async {
+    final parent = Directory(gameFolder).parent.path;
+    final base = '${safeName(project.gameTitle)} Setup';
+    String? icoPath;
+    if (icons != null) {
+      icoPath = '$parent${Platform.pathSeparator}$base.ico';
+      await File(icoPath).writeAsBytes(icons.toIco());
+    }
+    final iss = File('$parent${Platform.pathSeparator}$base.iss');
+    await iss.writeAsString(installerScript(project, gameFolder, iconPath: icoPath));
+    final iscc = findInnoCompiler();
+    if (iscc == null) {
+      onLog?.call('Installer script written: ${iss.path} (install Inno Setup to build Setup.exe)');
+      return (iss.path, null);
+    }
+    onLog?.call('> ISCC "${iss.path}"');
+    final r = await Process.run(iscc, ['/Q', iss.path], workingDirectory: parent);
+    if (r.exitCode != 0) throw StateError('Inno Setup failed: ${'${r.stdout}${r.stderr}'.trim()}');
+    final setup = '$parent${Platform.pathSeparator}$base.exe';
+    return (iss.path, File(setup).existsSync() ? setup : null);
   }
 
   // ---------------------------------------------------------------------------
@@ -172,8 +304,9 @@ class GameExporter {
     required EmberProject project,
     required Directory runtime,
     required String outputParent,
+    GameIconSet? icons,
   }) async {
-    final outDir = Directory(_join(outputParent, '${safeName(project.name)}-web'));
+    final outDir = Directory(_join(outputParent, '${safeName(project.gameTitle)}-web'));
     if (await outDir.exists()) await outDir.delete(recursive: true);
     await _copyDirectory(runtime, outDir);
 
@@ -181,18 +314,32 @@ class GameExporter {
     final index = File(_join(outDir.path, 'index.html'));
     await index.writeAsString((await index.readAsString())
         .replaceFirst(RegExp(r'<base href="[^"]*">'), '<base href="./">')
-        .replaceFirst(RegExp(r'<title>[^<]*</title>'), '<title>${_htmlEscape(project.name)}</title>')
+        .replaceFirst(RegExp(r'<title>[^<]*</title>'), '<title>${_htmlEscape(project.gameTitle)}</title>')
         .replaceFirst(RegExp(r'<meta name="apple-mobile-web-app-title" content="[^"]*">'),
-            '<meta name="apple-mobile-web-app-title" content="${_htmlEscape(project.name)}">'));
+            '<meta name="apple-mobile-web-app-title" content="${_htmlEscape(project.gameTitle)}">')
+        .replaceFirst(RegExp(r'<meta name="description" content="[^"]*">'),
+            '<meta name="description" content="${_htmlEscape(project.gameTitle)} (made with Ember Engine)">'));
+
+    // The game's icon as the favicon and the "install app" icons
+    if (icons != null) {
+      await File(_join(outDir.path, 'favicon.png')).writeAsBytes(icons[32]);
+      for (final s in [192, 512]) {
+        final dir = Directory(_join(outDir.path, 'icons'));
+        await dir.create(recursive: true);
+        await File(_join(dir.path, 'Icon-$s.png')).writeAsBytes(icons[s]);
+        await File(_join(dir.path, 'Icon-maskable-$s.png')).writeAsBytes(icons[s]);
+      }
+    }
 
     // "Install app" in the browser uses the game's name, not the engine's
     final manifest = File(_join(outDir.path, 'manifest.json'));
     if (await manifest.exists()) {
       try {
         final m = (jsonDecode(await manifest.readAsString()) as Map).cast<String, dynamic>();
-        m['name'] = project.name;
-        m['short_name'] = project.name.length > 12 ? project.name.substring(0, 12).trim() : project.name;
-        m['description'] = '${project.name} (made with Ember Engine)';
+        final title = project.gameTitle;
+        m['name'] = title;
+        m['short_name'] = title.length > 12 ? title.substring(0, 12).trim() : title;
+        m['description'] = '$title (made with Ember Engine)';
         await manifest.writeAsString(const JsonEncoder.withIndent('  ').convert(m));
       } catch (_) {} // a hand-edited manifest is left as it is
     }
@@ -203,7 +350,7 @@ class GameExporter {
 
     await File(_join(outDir.path, 'play-locally.ps1')).writeAsString(_localServerScript);
     await File(_join(outDir.path, 'README.txt')).writeAsString(
-      '${project.name} - web version (Ember Engine)\r\n\r\n'
+      '${project.gameTitle} - web version (Ember Engine)\r\n\r\n'
       'Upload this whole folder to a web host (itch.io "HTML" game, GitHub Pages, Netlify...)\r\n'
       'and open index.html there. Browsers do not run it straight from the disk.\r\n\r\n'
       'To try it on this computer: right-click play-locally.ps1 > Run with PowerShell,\r\n'
@@ -212,45 +359,96 @@ class GameExporter {
     return outDir.path;
   }
 
+  /// `<Game>-web.zip` for itch.io (index.html at the zip's root; the local-play helpers left out).
+  static Future<String> zipWebForItch(String webFolder) async {
+    final dir = Directory(webFolder);
+    final zip = File('${dir.path}.zip');
+    await ZipWriter.zipFolder(dir, zip, exclude: {'play-locally.ps1', 'README.txt'});
+    return zip.path;
+  }
+
   // ---------------------------------------------------------------------------
   // Android
 
-  /// Builds an Android APK of [project] (with its own name and app id, so
-  /// several games install side by side) into `<outputParent>/<GameName>.apk`.
-  /// Needs the engine source folder and the Android SDK; takes a few minutes.
-  static Future<String> exportAndroid({
+  /// Builds Android packages of [project] with its own name, app id, icon and
+  /// version into [outputParent]: an `.apk` (install on phones) and/or an
+  /// `.aab` (upload to Google Play). Signed with [key] when given (needed for
+  /// Google Play), otherwise with the debug key. Needs the engine source folder
+  /// and the Android SDK; takes a few minutes. Returns the files written.
+  static Future<List<String>> exportAndroid({
     required EmberProject project,
     required String outputParent,
     void Function(String line)? onLog,
+    GameIconSet? icons,
+    AndroidSigningKey? key,
+    String? password,
+    bool apk = true,
+    bool appBundle = false,
   }) async {
     final repo = findEngineRepo();
     if (repo == null) {
       throw StateError('Android export needs the engine source folder (start the editor from it) and the Android SDK.');
     }
+    if (!apk && !appBundle) throw ArgumentError('Choose an APK, an app bundle, or both.');
+    if (key != null && password == null) throw ArgumentError('The signing key needs its password.');
     final staged = File(_join(repo.path, 'assets', 'game', gameFileName));
     await staged.parent.create(recursive: true);
     await staged.writeAsString(ProjectPackageManager.exportToPackageString(project, files: await collectProjectFiles(project)));
+    Directory? iconRes;
     try {
-      final appId = androidAppId(project.name);
-      onLog?.call('App id: $appId');
-      await _runFlutter(
-        repo,
-        ['build', 'apk', '--release', '-t', 'lib/main_player.dart'],
-        environment: {'EMBER_APP_ID': appId, 'EMBER_APP_NAME': project.name},
-        onLog: onLog,
-      );
-      final apk = File(_join(repo.path, 'build', 'app', 'outputs', 'flutter-apk', 'app-release.apk'));
-      if (!await apk.exists()) throw StateError('The build finished but no APK was found at ${apk.path}');
+      final env = androidEnvironment(project, key: key, password: password);
+      if (icons != null) {
+        iconRes = await Directory.systemTemp.createTemp('ember_icon_res');
+        for (final (folder, size) in GameIconSet.androidSizes) {
+          final f = File(_join(iconRes.path, 'mipmap-$folder', 'ember_game_icon.png'));
+          await f.parent.create(recursive: true);
+          await f.writeAsBytes(icons[size]);
+        }
+        env['EMBER_ICON_RES'] = iconRes.path;
+      }
+      onLog?.call('App id ${env['EMBER_APP_ID']} · version ${androidVersionName(project)} (${project.game.buildNumber}) · '
+          '${key == null ? 'debug-signed' : 'signed with ${key.keystorePath}'}');
+      final version = ['--build-name=${androidVersionName(project)}', '--build-number=${project.game.buildNumber}'];
       await Directory(outputParent).create(recursive: true);
-      final out = _join(outputParent, '${safeName(project.name)}.apk');
-      await apk.copy(out);
-      return out;
+      final outputs = <String>[];
+      final base = _join(outputParent, safeName(project.gameTitle));
+      if (appBundle) {
+        await _runFlutter(repo, ['build', 'appbundle', '--release', '-t', 'lib/main_player.dart', ...version], environment: env, onLog: onLog);
+        final aab = File(_join(repo.path, 'build', 'app', 'outputs', 'bundle', 'release', 'app-release.aab'));
+        if (!await aab.exists()) throw StateError('The build finished but no app bundle was found at ${aab.path}');
+        outputs.add((await aab.copy('$base.aab')).path);
+      }
+      if (apk) {
+        await _runFlutter(repo, ['build', 'apk', '--release', '-t', 'lib/main_player.dart', ...version], environment: env, onLog: onLog);
+        final built = File(_join(repo.path, 'build', 'app', 'outputs', 'flutter-apk', 'app-release.apk'));
+        if (!await built.exists()) throw StateError('The build finished but no APK was found at ${built.path}');
+        outputs.add((await built.copy('$base.apk')).path);
+      }
+      return outputs;
     } finally {
       // The engine's own builds must not ship this game: remove the staged file and
       // the copies Gradle / Flutter keep in their incremental build folders.
       if (await staged.exists()) await staged.delete();
       await removeStagedGameCopies(repo);
+      if (iconRes != null) await iconRes.delete(recursive: true);
     }
+  }
+
+  /// The game's Android identity and signing key, as read by android/app/build.gradle.kts.
+  static Map<String, String> androidEnvironment(EmberProject project, {AndroidSigningKey? key, String? password}) => {
+        'EMBER_APP_ID': project.game.appId.isNotEmpty ? project.game.appId : androidAppId(project.gameTitle),
+        'EMBER_APP_NAME': project.gameTitle,
+        if (key != null && password != null) ...AndroidSigning.gradleEnvironment(key, password),
+      };
+
+  /// Android needs three version numbers (x.y.z).
+  static String androidVersionName(EmberProject project) {
+    if (!GameSettings.isValidVersion(project.version)) return '1.0.0';
+    final p = project.version.split('.');
+    while (p.length < 3) {
+      p.add('0');
+    }
+    return p.join('.');
   }
 
   /// Deletes copies of a staged Android game left in the repo's build folders.
@@ -315,9 +513,9 @@ class GameExporter {
     if (code != 0) throw ProcessException('flutter', args, 'Build failed (exit code $code)', code);
   }
 
-  static String _join(String a, [String? b, String? c, String? d, String? e, String? f]) {
+  static String _join(String a, [String? b, String? c, String? d, String? e, String? f, String? g]) {
     final sep = Platform.pathSeparator;
-    return [a, ?b, ?c, ?d, ?e, ?f].map((p) => p.replaceAll('/', sep)).join(sep);
+    return [a, ?b, ?c, ?d, ?e, ?f, ?g].map((p) => p.replaceAll('/', sep)).join(sep);
   }
 
   static String _htmlEscape(String s) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');

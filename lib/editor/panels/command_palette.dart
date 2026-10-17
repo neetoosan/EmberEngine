@@ -53,6 +53,7 @@ class CommandPaletteDialog extends StatefulWidget {
   final VoidCallback? onUndo;
   final VoidCallback? onRedo;
   final void Function(int workspace)? onSwitchWorkspace;
+  final VoidCallback? onOpenProjectSettings;
 
   const CommandPaletteDialog({
     super.key,
@@ -65,6 +66,7 @@ class CommandPaletteDialog extends StatefulWidget {
     this.onUndo,
     this.onRedo,
     this.onSwitchWorkspace,
+    this.onOpenProjectSettings,
   });
 
   @override
@@ -97,6 +99,13 @@ class _CommandPaletteDialogState extends State<CommandPaletteDialog> {
 
   void _buildCommandsList() {
     _allCommands = [
+      if (widget.onOpenProjectSettings != null)
+        PaletteCommand(
+          title: 'Project Settings (game name, icon, version, publisher)',
+          category: 'Project',
+          icon: Icons.tune_rounded,
+          onExecute: widget.onOpenProjectSettings!,
+        ),
       PaletteCommand(
         title: 'About Ember Engine (version, licences, logs)',
         category: 'Help',

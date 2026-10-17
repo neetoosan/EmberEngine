@@ -137,6 +137,9 @@ class ProjectSession extends ChangeNotifier {
           for (final e in project.scenes.entries) e.key: e.key == editingScene && editingJson != null ? editingJson : e.value.toJson(),
         },
         'scripts': Map<String, String>.of(project.scripts),
+        'version': project.version,
+        'author': project.author,
+        'game': project.game.toJson(),
       };
 
   /// Puts recovered [content] into [project] (scenes, scripts, start scene).
@@ -150,6 +153,9 @@ class ProjectSession extends ChangeNotifier {
       ..addAll(((content['scripts'] as Map?) ?? const {}).map((k, v) => MapEntry('$k', '$v')));
     final start = content['start'] as String?;
     if (start != null && project.scenes.containsKey(start)) project.defaultSceneName = start;
+    if (content['version'] is String) project.version = content['version'] as String;
+    if (content['author'] is String) project.author = content['author'] as String;
+    if (content.containsKey('game')) project.game = GameSettings.fromJson(content['game']);
   }
 
   static File recoveryFile(EmberProject project) =>

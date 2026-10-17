@@ -41,6 +41,9 @@ dependencies:
   audioplayers: ^6.8.1
   shared_preferences: ^2.5.5
   forge2d: 0.14.0
+  ffi: ^2.2.0
+  flutter_secure_storage: ^11.2.0
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:
@@ -70,8 +73,13 @@ flutter:
     - assets/templates/quest/
     - assets/templates/legends/
     - assets/templates/siege/
+    - assets/templates/arena/
+    - assets/templates/gems/
+    - assets/templates/solitaire/
+    - assets/templates/story/
     # Web / Android exports put the game package here (empty in the editor)
     - assets/game/
+    - assets/branding/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

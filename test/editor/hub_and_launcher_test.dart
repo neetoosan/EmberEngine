@@ -127,20 +127,14 @@ void main() {
     expect(find.text('Recent Projects'), findsWidgets);
     expect(find.text('Open & Import'), findsOneWidget);
 
-    // Verify the 5 template cards are displayed
+    // Every template has a card (later ones further down the scrolling grid)
     expect(find.text('2D Platformer Adventure'), findsOneWidget);
-    expect(find.text('Ember Legends'), findsOneWidget);
-    // Later cards are further down the scrolling template grid
     final gridElement = find.ancestor(of: find.text('2D Platformer Adventure'), matching: find.byType(Scrollable)).evaluate().first;
     final grid = find.byElementPredicate((e) => e == gridElement);
-    await tester.scrollUntilVisible(find.text('Flappy Arcade'), 300, scrollable: grid);
-    expect(find.text('Flappy Arcade'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('3D FPS Arena'), 300, scrollable: grid);
-    expect(find.text('3D FPS Arena'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Procedural Particle Playground'), 300, scrollable: grid);
-    expect(find.text('Procedural Particle Playground'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Blank Canvas Project'), 300, scrollable: grid);
-    expect(find.text('Blank Canvas Project'), findsOneWidget);
+    for (final t in TemplateCatalog.templates) {
+      await tester.scrollUntilVisible(find.text(t.title), 300, scrollable: grid);
+      expect(find.text(t.title), findsOneWidget, reason: t.title);
+    }
     await tester.scrollUntilVisible(find.text('2D Platformer Adventure'), -300, scrollable: grid);
 
     // 2. Click "Create Project" on the 2D Platformer Adventure card

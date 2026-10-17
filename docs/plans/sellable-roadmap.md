@@ -49,11 +49,30 @@ Windows editor.
 ## Phase 2: Publishing exports
 Goal: a user can ship a game to a store without leaving Ember.
 
+**Status (2026-10-07): 2.1 to 2.4 are built, plus MSIX for Windows. 2.5 is partly
+done; 2.6 is for later.** What has been checked on this PC:
+
+- **Windows:**
+  - the branded .exe runs on a stripped PATH;
+  - Setup.exe built with Inno Setup 7;
+  - MSIX packed, signed with a test certificate, installed through Developer
+    Mode, played, then removed.
+- **Web:** played in Chrome and Edge (title, locks, levels, physics).
+- **Android:** signed AAB and APK built. The signatures, app id, version, label
+  and icon were checked with apksigner, aapt2 and jarsigner.
+
+Still to do:
+
+- **Stores:** a real Play Console and Partner Center upload (needs the user's
+  accounts).
+- **Hardware:** an Android phone, Firefox, and a clean PC without Flutter.
+- **QA notes:** test logs in `docs/qa/`.
+
 | # | Work | Size | Done when |
 |---|---|---|---|
 | 2.1 | **Game identity:** icon (pick a PNG; Ember makes .ico / Android / web sizes), display name, version, publisher, all set in a Project Settings window. | M | Exported Windows/web/Android games show the game's own icon and name. |
 | 2.2 | **Android release builds:** create or choose a keystore (stored outside the project, password in secure storage), build a signed **AAB** for the Play Store as well as an APK. Explain where to back up the key. | M | Uploads to the Play Console without errors. |
-| 2.3 | **Windows installer:** optional setup.exe (Inno Setup or MSIX) with Start menu shortcut and uninstaller. Signing documented: users with a code-signing certificate can plug it in. | M | — |
+| 2.3 | **Windows installer:** optional setup.exe (Inno Setup) with Start menu shortcut and uninstaller, or an MSIX package (unsigned for the Microsoft Store, or signed with the user's .pfx or a test certificate). | M | MSIX installs and runs; Setup.exe builds. |
 | 2.4 | **Web for itch.io:** one-click ZIP with the right layout (index.html at the root, relative paths), plus a checklist for the itch.io page settings. | S | The ZIP plays on itch.io as uploaded. |
 | 2.5 | **Real-device testing:** play every template on an Android phone, Chrome/Edge/Firefox, and a clean Windows PC without Flutter installed. Fix what breaks, especially audio on web. | M | A test log per platform in `docs/qa/`. |
 | 2.6 | **Optional later:** macOS and Linux export (the project folders exist; needs builds and testing on those systems, and Apple notarization for macOS). | L | — |
@@ -71,6 +90,22 @@ Goal: a new user makes something fun in the first 10 minutes, without docs.
 
 ## Phase 4: Engine features users expect
 Goal: close the most common gaps people compare engines on. Ordered by expected value.
+
+**Detailed plan:** [engine-readiness.md](engine-readiness.md). Part A covers
+complete 2D readiness, with a genre checklist. Part B covers 3D model import
+(glTF, Godot-style).
+
+**Done early (2026-10-07), with the Ember Arena template:**
+- **3D gameplay toolkit:** `vec3` and 3D entity control in Ember Script, 3D
+  raycasts and line of sight, Enemy AI 3D, Projectile 3D, and Health in 3D.
+- **Mouse capture** on Windows and web.
+- **Look:** sky and fog, glowing materials, mesh hit flash, a draw-order bias,
+  segment detail and an open tube shape.
+- **Fixes:** capped cylinders, and UI buttons that can be clicked in 3D games.
+
+Still open in 4.8: glTF import (the user's Blender generator will export
+`.glb`), textures, and a third-person controller. See Part B of
+engine-readiness.md.
 
 | # | Work | Size |
 |---|---|---|

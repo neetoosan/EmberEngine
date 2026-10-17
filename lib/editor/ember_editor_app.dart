@@ -11,6 +11,7 @@ import 'hub/project_launcher.dart';
 import 'hub/project_manifest.dart';
 import 'hub/project_storage.dart';
 import 'panels/export_dialog.dart';
+import 'panels/project_settings_dialog.dart';
 import 'mobile/virtual_joystick.dart';
 import 'panels/bottom_drawer.dart';
 import 'panels/command_palette.dart';
@@ -539,8 +540,19 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
         onUndo: _undo,
         onRedo: _redo,
         onSwitchWorkspace: _setWorkspace,
+        onOpenProjectSettings: _currentProject == null ? null : _openProjectSettings,
       ),
     );
+  }
+
+  Future<void> _openProjectSettings() async {
+    final project = _currentProject;
+    final ctx = _navigatorKey.currentContext;
+    if (project == null || ctx == null) return;
+    if (await ProjectSettingsDialog.show(ctx, project)) {
+      ProjectSession.instance.refresh(); // shows the unsaved dot; Ctrl+S saves the settings
+      _notify('Project settings changed: save to keep them');
+    }
   }
 
   void _toggleZenMode() {
@@ -618,10 +630,11 @@ class _EmberEditorAppState extends State<EmberEditorApp> {
                       ScriptWorkspaceController.instance.open(file);
                     },
                     onSave: () async => _saveProject(),
+                    onOpenSettings: _openProjectSettings,
                   ),
                   onSaveScene: _saveProject,
                   onExportGame: ProjectStorage.isSupported
-                      ? () => ExportGameDialog.show(appContext, prepareProject: _saveProject)
+                      ? () => ExportGameDialog.show(appContext, prepareProject: _saveProject, project: _currentProject)
                       : null,
                   sceneSelector: _buildSceneMenu(appContext),
                   workspaceSwitch: _workspaceSwitch(appContext),

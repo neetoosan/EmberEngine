@@ -6,16 +6,19 @@ import '../../core/entity.dart';
 import '../../core/inspectable.dart';
 import '../../core/scene.dart';
 import '../../core/transform2d.dart';
+import '../physics/character_controller3d.dart';
 import '../physics/tile_collision.dart';
+import '../three_d/components3d.dart';
 import '../two_d/flame_components.dart';
 import '../two_d/top_down_controller.dart';
 
 /// Hit points for players, monsters and breakables.
 ///
 /// Damage respects [team] (no friendly fire), grants [invulnerableTime]
-/// seconds of immunity, flashes the sprite red, applies knockback through a
-/// Top-Down Controller, and sends `onDamaged` / `onDeath` to the entity's
-/// scripts. With [destroyOnDeath] the entity is removed when it dies.
+/// seconds of immunity, flashes the sprite (2D) or every mesh (3D) red,
+/// applies knockback through a Top-Down Controller (2D) or Character
+/// Controller 3D, and sends `onDamaged` / `onDeath` to the entity's scripts.
+/// With [destroyOnDeath] the entity is removed when it dies.
 class HealthComponent extends EmberComponent {
   double maxHealth;
   double health;
@@ -39,9 +42,9 @@ class HealthComponent extends EmberComponent {
   bool get isInvulnerable => _invulnerable > 0;
 
   /// Applies [amount] damage unless dead, invulnerable, or on the same team as
-  /// [source]. [knockback] (world pixels/second) pushes the target away.
-  /// Returns true if damage was dealt.
-  bool damage(double amount, {EmberEntity? source, vm.Vector2? knockback}) {
+  /// [source]. [knockback] (world pixels/second) pushes a 2D target away;
+  /// [push] (metres/second) pushes a 3D one. Returns true if damage was dealt.
+  bool damage(double amount, {EmberEntity? source, vm.Vector2? knockback, vm.Vector3? push}) {
     final self = entity;
     if (self == null || isDead || _invulnerable > 0 || amount <= 0) return false;
     final sourceTeam = source?.getComponent<HealthComponent>()?.team ?? _teamTag(source);
@@ -51,6 +54,7 @@ class HealthComponent extends EmberComponent {
     _invulnerable = invulnerableTime;
     _startFlash();
     if (knockback != null) self.getComponent<TopDownController2DComponent>()?.knockback(knockback);
+    if (push != null) self.getComponent<CharacterController3DComponent>()?.knockback(push);
     self.notifyScripts((s) => s.onDamaged(amount, source));
     if (isDead) {
       self.notifyScripts((s) => s.onDeath(source));
@@ -59,6 +63,17 @@ class HealthComponent extends EmberComponent {
     }
     notifyListeners();
     return true;
+  }
+
+  /// Dies right away (ignores team and invulnerability), e.g. a robot that self-destructs.
+  void kill({EmberEntity? source}) {
+    final self = entity;
+    if (self == null || isDead) return;
+    health = 0;
+    self.notifyScripts((s) => s.onDeath(source));
+    if (source != null && !identical(source, self)) source.notifyScripts((s) => s.onKill(self));
+    if (destroyOnDeath) self.scene?.destroyLater(self);
+    notifyListeners();
   }
 
   void heal(double amount) {
@@ -76,12 +91,24 @@ class HealthComponent extends EmberComponent {
     return null;
   }
 
+  /// Colour of the hit flash on 3D meshes.
+  static const Color meshFlashColor = Color(0xFFFF4D4D);
+
   void _startFlash() {
+    final self = entity;
+    if (self != null) _flashMeshes(self);
     final sprite = entity?.getComponent<FlameSpriteComponent>();
     if (sprite == null) return;
     _tintBeforeFlash ??= sprite.tint;
     sprite.tint = const Color(0xFFFF5A5A);
     _flash = 0.12;
+  }
+
+  static void _flashMeshes(EmberEntity e) {
+    e.getComponent<MeshRenderer3DComponent>()?.flash(meshFlashColor, 0.14);
+    for (final c in e.children) {
+      _flashMeshes(c);
+    }
   }
 
   @override

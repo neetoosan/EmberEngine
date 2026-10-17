@@ -20,6 +20,8 @@ import '../subsystems/two_d/flame_components.dart';
 import '../subsystems/two_d/line2d.dart';
 import '../subsystems/two_d/parallax.dart';
 import '../subsystems/two_d/sprite_animator.dart';
+import '../subsystems/ai/enemy_ai3d.dart';
+import '../subsystems/story/story_player.dart';
 import '../subsystems/ai/monster_ai.dart';
 import '../subsystems/combat/combat.dart';
 import '../subsystems/two_d/door.dart';
@@ -459,6 +461,8 @@ class EmberScene with ChangeNotifier {
     registerCombatComponents();
     registerTopDownController();
     registerMonsterAI();
+    registerEnemyAI3D();
+    registerStoryComponents();
     registerDoorComponent();
     registerStandardGameplayScripts();
     registerFlappyScripts();

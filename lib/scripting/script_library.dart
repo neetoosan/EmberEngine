@@ -41,6 +41,7 @@ class EmberScripts extends ChangeNotifier {
   static bool isScriptFile(String name) => name.endsWith(extension);
 
   final Map<String, String> _sources = {};
+  final Map<String, String> _texts = {};
   final Map<String, Program> _programs = {};
   final Map<String, ScriptProblem> _compileErrors = {};
   final Map<String, ScriptProblem> _runtimeErrors = {};
@@ -62,6 +63,21 @@ class EmberScripts extends ChangeNotifier {
 
   List<String> get names => _sources.keys.toList()..sort();
   String? source(String file) => _sources[file];
+
+  /// Any other file kept with the scripts (e.g. a `.story` for the Story
+  /// Player), by name; null if there is none.
+  String? text(String file) => _texts[file];
+
+  /// Counts edits of [text] files, so readers can reload them while playing.
+  int textRevision = 0;
+
+  /// Adds or edits a non-script text file (edited in the Script workspace).
+  void updateText(String file, String content) {
+    if (_texts[file] == content) return;
+    _texts[file] = content;
+    textRevision++;
+    notifyListeners();
+  }
   Program? program(String file) => _programs[file];
   ScriptProblem? compileError(String file) => _compileErrors[file];
   List<ScriptProblem> get problems => [..._compileErrors.values, ..._runtimeErrors.values];
@@ -70,11 +86,17 @@ class EmberScripts extends ChangeNotifier {
   /// Replaces all scripts with the `.ember` entries of [scripts] (e.g. a project's).
   void loadAll(Map<String, String> scripts) {
     _sources.clear();
+    _texts.clear();
     _programs.clear();
     _compileErrors.clear();
     for (final e in scripts.entries) {
-      if (isScriptFile(e.key)) _compile(e.key, e.value);
+      if (isScriptFile(e.key)) {
+        _compile(e.key, e.value);
+      } else {
+        _texts[e.key] = e.value;
+      }
     }
+    textRevision++;
     notifyListeners();
   }
 
@@ -338,4 +360,6 @@ class EmberScriptBehavior extends GameScript implements ConfigurableScript {
   void onUIAction(String action) => _call('onUIAction', [action]);
   @override
   void onInteract(EmberEntity by) => _call('onInteract', [by]);
+  @override
+  void onMessage(String name, List<Object?> args) => _call(name, args);
 }

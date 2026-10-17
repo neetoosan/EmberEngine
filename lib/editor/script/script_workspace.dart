@@ -164,7 +164,10 @@ class ScriptWorkspaceState extends State<ScriptWorkspace> {
     _unsaved.add(file);
     if (_lastSeen != file) setState(() {});
     _lastSeen = file;
-    if (!EmberScripts.isScriptFile(file)) return;
+    if (!EmberScripts.isScriptFile(file)) {
+      _lib.updateText(file, c.text); // stories and other text files apply at once
+      return;
+    }
     _checkTimer?.cancel();
     _checkTimer = Timer(const Duration(milliseconds: 350), () {
       if (!mounted) return;

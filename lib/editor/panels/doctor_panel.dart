@@ -19,6 +19,7 @@ class EmberDoctorDialog extends StatefulWidget {
   final bool Function()? hasUnsavedChanges;
   final void Function(String file)? onOpenScript;
   final Future<void> Function()? onSave;
+  final VoidCallback? onOpenSettings;
 
   /// Off in tests (they don't look at this machine's Flutter / Android setup).
   final bool checkExports;
@@ -30,6 +31,7 @@ class EmberDoctorDialog extends StatefulWidget {
     this.hasUnsavedChanges,
     this.onOpenScript,
     this.onSave,
+    this.onOpenSettings,
     this.checkExports = !kIsWeb,
   });
 
@@ -40,6 +42,7 @@ class EmberDoctorDialog extends StatefulWidget {
     bool Function()? hasUnsavedChanges,
     void Function(String file)? onOpenScript,
     Future<void> Function()? onSave,
+    VoidCallback? onOpenSettings,
     bool checkExports = !kIsWeb,
   }) {
     showDialog(
@@ -50,6 +53,7 @@ class EmberDoctorDialog extends StatefulWidget {
         hasUnsavedChanges: hasUnsavedChanges,
         onOpenScript: onOpenScript,
         onSave: onSave,
+        onOpenSettings: onOpenSettings,
         checkExports: checkExports,
       ),
     );
@@ -101,6 +105,12 @@ class _EmberDoctorDialogState extends State<EmberDoctorDialog> {
           : () async {
               await widget.onSave!();
               if (mounted) _runDiagnostics();
+            },
+      onOpenSettings: widget.onOpenSettings == null
+          ? null
+          : () {
+              Navigator.of(context).pop();
+              widget.onOpenSettings!();
             },
     );
     if (!mounted) return;

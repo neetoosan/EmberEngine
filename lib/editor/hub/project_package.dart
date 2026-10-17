@@ -2,6 +2,11 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'project_manifest.dart';
 
+/// The game file an exported player loads (beside the .exe, or inside the
+/// web / Android bundle). Here rather than in GameExporter so the player,
+/// which also runs on the web, never imports the desktop-only exporter.
+const String emberGameFileName = 'game.emberpkg.json';
+
 /// Single-file archive manager for portable `.emberpkg` bundles.
 ///
 /// Encapsulates project manifest, serialized scenes, custom scripts,

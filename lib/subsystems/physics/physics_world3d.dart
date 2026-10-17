@@ -142,13 +142,14 @@ class PhysicsWorld3D {
     }
   }
 
-  /// High-speed 3D Raycast against scene colliders.
+  /// The first collider along a ray (trigger colliders, e.g. pickups, are skipped unless [includeTriggers]).
   static RaycastHit3D? raycast({
     required EmberScene scene,
     required Vector3 origin,
     required Vector3 direction,
     double maxDistance = 100.0,
     EmberEntity? ignoreEntity,
+    bool includeTriggers = false,
   }) {
     final normDir = direction.normalized();
     RaycastHit3D? closestHit;
@@ -158,7 +159,7 @@ class PhysicsWorld3D {
       if (!entity.enabled || entity == ignoreEntity) continue;
       final t3d = entity.getComponent<Transform3DComponent>();
       final col = entity.getComponent<Collider3DComponent>();
-      if (t3d == null || col == null) continue;
+      if (t3d == null || col == null || !col.enabled || (col.isTrigger && !includeTriggers)) continue;
 
       final center = t3d.worldPosition + col.center;
       final halfSize = Vector3(

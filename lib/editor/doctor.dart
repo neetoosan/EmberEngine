@@ -6,7 +6,10 @@ import '../core/crash_reporter.dart';
 import '../core/game_script.dart';
 import '../core/version.dart';
 import '../scripting/script_library.dart';
+import '../subsystems/story/story_script.dart';
 import 'hub/game_exporter.dart';
+import 'hub/game_icons.dart';
+import 'hub/project_manifest.dart';
 
 /// Result of one Doctor check.
 enum HealthStatus {
@@ -51,14 +54,22 @@ class DoctorInput {
   final Map<String, String> scripts;
   final bool hasUnsavedChanges;
 
-  const DoctorInput({
+  /// Version text and identity used by exports (Project Settings).
+  final String version;
+  final String author;
+  final GameSettings game;
+
+  DoctorInput({
     required this.projectName,
     this.projectPath = '',
     required this.startScene,
     required this.scenes,
     required this.scripts,
     this.hasUnsavedChanges = false,
-  });
+    this.version = '1.0.0',
+    this.author = '',
+    GameSettings? game,
+  }) : game = game ?? GameSettings();
 
   /// From the map produced by `ProjectSession.contentOf`.
   factory DoctorInput.fromContent(Map<String, dynamic> content, {String projectPath = '', bool hasUnsavedChanges = false}) => DoctorInput(
@@ -68,6 +79,9 @@ class DoctorInput {
         scenes: {for (final e in (content['scenes'] as Map).entries) '${e.key}': (e.value as Map).cast<String, dynamic>()},
         scripts: (content['scripts'] as Map).map((k, v) => MapEntry('$k', '$v')),
         hasUnsavedChanges: hasUnsavedChanges,
+        version: content['version'] as String? ?? '1.0.0',
+        author: content['author'] as String? ?? '',
+        game: GameSettings.fromJson(content['game']),
       );
 }
 
@@ -86,6 +100,8 @@ class ProjectDoctor {
     void Function(String file)? onOpenScript,
     VoidCallback? onSave,
     Future<bool> Function(String path)? assetExists,
+    VoidCallback? onOpenSettings,
+    Future<IconCheck?> Function(String path)? inspectIcon,
     bool checkExports = !kIsWeb,
   }) async {
     final items = <DiagnosticReportItem>[
@@ -97,11 +113,14 @@ class ProjectDoctor {
       ),
       _startScene(input),
       ..._scriptCompile(input, onOpenScript),
+      ?_stories(input, onOpenScript),
       ?_runtimeErrors(onOpenScript),
       _scriptReferences(input),
       _sceneLinks(input),
       await _assets(input, assetExists ?? _defaultAssetExists(input.projectPath)),
       _saved(input, onSave),
+      _identity(input, onOpenSettings),
+      await _icon(input, onOpenSettings, inspectIcon ?? _defaultInspectIcon(input.projectPath)),
       if (checkExports) ..._exports(),
     ];
     return items;
@@ -167,6 +186,36 @@ class ProjectDoctor {
           recommendation: 'Move the logic into an Ember Script (.ember) and attach it with a Script Component.',
         ),
     ];
+  }
+
+  /// Story files (Story Player) read without errors.
+  static DiagnosticReportItem? _stories(DoctorInput input, void Function(String file)? onOpenScript) {
+    final stories = input.scripts.entries.where((e) => e.key.endsWith('.story')).toList();
+    if (stories.isEmpty) return null;
+    final problems = <String>[];
+    String? firstBad;
+    for (final e in stories) {
+      final p = StoryScript.parse(e.value);
+      if (p.errors.isEmpty) continue;
+      firstBad ??= e.key;
+      problems.add('${e.key} ${p.errors.first}${p.errors.length > 1 ? ' (+${p.errors.length - 1} more)' : ''}');
+    }
+    if (problems.isEmpty) {
+      return DiagnosticReportItem(
+        title: 'Stories',
+        category: 'Scripts',
+        status: HealthStatus.passed,
+        details: 'All ${stories.length} story file${stories.length == 1 ? '' : 's'} read without mistakes.',
+      );
+    }
+    return DiagnosticReportItem(
+      title: 'Stories',
+      category: 'Scripts',
+      status: HealthStatus.failed,
+      details: problems.join('\n'),
+      actionLabel: onOpenScript == null ? null : 'Open $firstBad',
+      action: onOpenScript == null ? null : () => onOpenScript(firstBad!),
+    );
   }
 
   static DiagnosticReportItem? _runtimeErrors(void Function(String file)? onOpenScript) {
@@ -294,6 +343,92 @@ class ProjectDoctor {
           status: HealthStatus.passed,
           details: input.projectPath.isEmpty ? 'All changes saved.' : 'All changes saved in ${input.projectPath}.',
         );
+
+  /// Name, version and app id that exports write into the game.
+  static DiagnosticReportItem _identity(DoctorInput input, VoidCallback? onOpenSettings) {
+    final game = input.game;
+    final title = game.displayName.trim().isEmpty ? input.projectName : game.displayName.trim();
+    final problems = [
+      if (!GameSettings.isValidVersion(input.version)) 'version "${input.version}" is not like 1.0 or 1.2.3 (exports would use 1.0.0)',
+      if (game.appId.isNotEmpty && !GameSettings.isValidAppId(game.appId))
+        'app id "${game.appId}" is not valid (like com.studio.game: letters, digits and _, parts separated by dots)',
+      if (game.msixName.isNotEmpty && !GameSettings.isValidMsixName(game.msixName)) 'MSIX package name "${game.msixName}" is not valid',
+      if (game.msixPublisher.isNotEmpty && !GameSettings.isValidMsixPublisher(game.msixPublisher))
+        'MSIX publisher "${game.msixPublisher}" is not a certificate subject like CN=My Studio',
+    ];
+    if (problems.isNotEmpty) {
+      return DiagnosticReportItem(
+        title: 'Game identity',
+        category: 'Publishing',
+        status: HealthStatus.failed,
+        details: 'The ${problems.join(', and the ')}.',
+        recommendation: 'Fix it in Project Settings before exporting for stores.',
+        actionLabel: onOpenSettings == null ? null : 'Project Settings',
+        action: onOpenSettings,
+      );
+    }
+    final appId = game.appId.isNotEmpty ? game.appId : GameExporter.androidAppId(title);
+    final publisher = game.publisher.trim().isNotEmpty ? game.publisher.trim() : input.author.trim();
+    return DiagnosticReportItem(
+      title: 'Game identity',
+      category: 'Publishing',
+      status: HealthStatus.passed,
+      details: '"$title" version ${input.version} (build ${game.buildNumber}) · Android id $appId'
+          '${publisher.isEmpty ? ' · no publisher set' : ' · by $publisher'}',
+      recommendation: publisher.isEmpty ? 'Set a publisher in Project Settings: file properties, installers and stores show it.' : null,
+      actionLabel: publisher.isEmpty && onOpenSettings != null ? 'Project Settings' : null,
+      action: publisher.isEmpty ? onOpenSettings : null,
+    );
+  }
+
+  /// The game's icon exists and is square and large enough.
+  static Future<DiagnosticReportItem> _icon(DoctorInput input, VoidCallback? onOpenSettings, Future<IconCheck?> Function(String path) inspect) async {
+    final path = input.game.iconPath.trim();
+    final fix = onOpenSettings == null ? null : 'Project Settings';
+    if (path.isEmpty) {
+      return DiagnosticReportItem(
+        title: 'Game icon',
+        category: 'Publishing',
+        status: HealthStatus.info,
+        details: 'No icon picked: exports use the Ember icon.',
+        recommendation: 'Pick a square PNG (512x512 is best) in Project Settings.',
+        actionLabel: fix,
+        action: onOpenSettings,
+      );
+    }
+    IconCheck? check;
+    try {
+      check = await inspect(path);
+    } catch (_) {
+      check = null;
+    }
+    if (check == null) {
+      return DiagnosticReportItem(
+        title: 'Game icon',
+        category: 'Publishing',
+        status: HealthStatus.failed,
+        details: 'The icon $path is missing or is not an image Ember can read.',
+        actionLabel: fix,
+        action: onOpenSettings,
+      );
+    }
+    final warning = check.warning;
+    return DiagnosticReportItem(
+      title: 'Game icon',
+      category: 'Publishing',
+      status: warning == null ? HealthStatus.passed : HealthStatus.warning,
+      details: warning ?? '$path (${check.width}x${check.height}).',
+      actionLabel: warning == null ? null : fix,
+      action: warning == null ? null : onOpenSettings,
+    );
+  }
+
+  static Future<IconCheck?> Function(String path) _defaultInspectIcon(String projectPath) => (path) async {
+        if (projectPath.isEmpty || kIsWeb) return null;
+        final file = File('$projectPath${Platform.pathSeparator}${path.replaceAll('/', Platform.pathSeparator)}');
+        if (!await file.exists()) return null;
+        return GameIcons.inspect(await file.readAsBytes());
+      };
 
   static List<DiagnosticReportItem> _exports() {
     final repo = GameExporter.findEngineRepo();

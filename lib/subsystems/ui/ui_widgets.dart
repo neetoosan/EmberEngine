@@ -438,7 +438,11 @@ class UIRenderer {
 
   static bool _visible(EmberComponent c) => c.enabled && (c.entity?.enabled ?? false);
 
+  /// Painted before the scene's UI (set by the Story Player).
+  static void Function(Canvas canvas, Rect view, double scale, EmberScene scene)? beforeUI;
+
   static void paintAll(Canvas canvas, Rect view, double scale, EmberScene scene) {
+    beforeUI?.call(canvas, view, scale, scene);
     for (final img in scene.componentsOf<UIImageComponent>()) {
       if (_visible(img)) img.paint(canvas, view, scale);
     }
