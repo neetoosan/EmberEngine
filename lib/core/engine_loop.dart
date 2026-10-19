@@ -167,8 +167,9 @@ class EmberEngine with ChangeNotifier {
       levelTime = 0;
       EmberScripts.instance.beginPlay();
       _activeScene.awake();
-      _activeScene.start();
+      // Running first: entities spawned by onStart scripts are started too
       _activeScene.isRunning = true;
+      _activeScene.start();
       _startTicker();
     }
 
@@ -445,8 +446,9 @@ class EmberEngine with ChangeNotifier {
     _physicsAccumulator = 0.0;
     levelTime = 0;
     _activeScene.awake();
-    _activeScene.start();
+    // Running first: entities spawned by onStart scripts are started too
     _activeScene.isRunning = true;
+    _activeScene.start();
     log('Scene "${scene.name}" (re)started', source: 'Runtime');
   }
 

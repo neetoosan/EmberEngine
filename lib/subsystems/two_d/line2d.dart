@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:vector_math/vector_math_64.dart' as vm;
 import '../../core/component.dart';
@@ -25,6 +26,9 @@ class Line2DComponent extends EmberComponent {
   /// Dots shrink and fade towards the end (trajectory previews).
   bool taper;
 
+  /// A soft light around the line that adds up like light (lasers, lightning).
+  bool glow;
+
   Line2DComponent({
     this.target = '',
     List<vm.Vector2>? points,
@@ -32,7 +36,25 @@ class Line2DComponent extends EmberComponent {
     this.width = 3,
     this.style = LineStyle2D.line,
     this.taper = false,
+    this.glow = false,
   }) : points = points ?? [];
+
+  /// Shortest distance from ([x], [y]) to the line (infinite if it has no points).
+  double distanceTo(double x, double y) {
+    final pts = resolvedPoints();
+    if (pts.isEmpty) return double.infinity;
+    if (pts.length == 1) return math.sqrt((pts[0].x - x) * (pts[0].x - x) + (pts[0].y - y) * (pts[0].y - y));
+    var best = double.infinity;
+    for (var i = 1; i < pts.length; i++) {
+      final a = pts[i - 1], b = pts[i];
+      final dx = b.x - a.x, dy = b.y - a.y;
+      final len2 = dx * dx + dy * dy;
+      final t = len2 == 0 ? 0.0 : (((x - a.x) * dx + (y - a.y) * dy) / len2).clamp(0.0, 1.0);
+      final px = a.x + dx * t - x, py = a.y + dy * t - y;
+      best = math.min(best, math.sqrt(px * px + py * py));
+    }
+    return best;
+  }
 
   static vm.Vector2 _centerOf(EmberEntity e) {
     final t = e.getComponent<Transform2DComponent>();
@@ -76,6 +98,18 @@ class Line2DComponent extends EmberComponent {
     final path = Path()..moveTo(pts.first.x, pts.first.y);
     for (final p in pts.skip(1)) {
       path.lineTo(p.x, p.y);
+    }
+    if (glow) {
+      canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = width * 4
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..color = color.withValues(alpha: color.a * 0.55)
+            ..blendMode = BlendMode.plus
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, width * 2.5));
     }
     canvas.drawPath(path, paint);
   }
@@ -141,6 +175,17 @@ class Line2DComponent extends EmberComponent {
           },
           tooltip: 'Dots shrink and fade towards the end',
         ),
+        InspectableProperty<bool>(
+          name: 'glow',
+          label: 'Glow',
+          type: InspectableType.boolean,
+          getter: () => glow,
+          setter: (v) {
+            glow = v;
+            notifyListeners();
+          },
+          tooltip: 'A soft light around the line (lasers, lightning)',
+        ),
       ];
 
   @override
@@ -151,6 +196,7 @@ class Line2DComponent extends EmberComponent {
         'width': width,
         'style': style.name,
         'taper': taper,
+        if (glow) 'glow': true,
       };
 
   @override
@@ -164,6 +210,7 @@ class Line2DComponent extends EmberComponent {
     width = (json['width'] as num?)?.toDouble() ?? 3;
     style = LineStyle2D.values.firstWhere((s) => s.name == json['style'], orElse: () => LineStyle2D.line);
     taper = json['taper'] as bool? ?? false;
+    glow = json['glow'] as bool? ?? false;
     notifyListeners();
   }
 

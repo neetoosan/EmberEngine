@@ -269,4 +269,8 @@ class _FakeBackend implements AudioBackend {
   void stop(AudioVoice voice) => stopped.add(voice.id);
   @override
   void stopAll() => stoppedAll = true;
+  @override
+  void pause(AudioVoice voice) {}
+  @override
+  void resume(AudioVoice voice) {}
 }

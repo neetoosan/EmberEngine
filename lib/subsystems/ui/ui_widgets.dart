@@ -87,6 +87,9 @@ class UIImageComponent extends EmberComponent with UILayout {
   int filled;
   double spacing;
 
+  /// Smooth (bilinear) scaling for painted art; off keeps pixel art crisp.
+  bool smooth = false;
+
   UIImageComponent({
     this.assetPath = '',
     this.columns = 1,
@@ -113,7 +116,7 @@ class UIImageComponent extends EmberComponent with UILayout {
     final cw = image.width / cols;
     final ch = image.height / (rows < 1 ? 1 : rows);
     final paint = Paint()
-      ..filterQuality = FilterQuality.none
+      ..filterQuality = smooth ? FilterQuality.medium : FilterQuality.none
       ..isAntiAlias = false;
     for (var i = 0; i < count; i++) {
       final f = i < filled ? frame : emptyFrame;
@@ -149,12 +152,24 @@ class UIImageComponent extends EmberComponent with UILayout {
           min: 0,
           step: 1,
         ),
+        InspectableProperty<bool>(
+          name: 'smooth',
+          label: 'Smooth Scaling',
+          type: InspectableType.boolean,
+          getter: () => smooth,
+          setter: (v) {
+            smooth = v;
+            notifyListeners();
+          },
+          tooltip: 'Off keeps pixel art crisp',
+        ),
         ...layoutProperties,
       ];
 
   @override
   Map<String, dynamic> toJson() => {
         ...layoutJson(),
+        if (smooth) 'smooth': true,
         'assetPath': assetPath,
         'columns': columns,
         'rows': rows,
@@ -176,6 +191,7 @@ class UIImageComponent extends EmberComponent with UILayout {
     count = (json['count'] as num?)?.toInt() ?? 1;
     filled = (json['filled'] as num?)?.toInt() ?? count;
     spacing = (json['spacing'] as num?)?.toDouble() ?? 4;
+    smooth = json['smooth'] as bool? ?? false;
     notifyListeners();
   }
 
@@ -190,6 +206,9 @@ class UIBarComponent extends EmberComponent with UILayout {
   Color fillColor;
   Color backColor;
   String label;
+
+  /// Fills from the right edge instead of the left (player 2's health bar).
+  bool fromRight = false;
 
   UIBarComponent({
     this.value = 1,
@@ -212,7 +231,8 @@ class UIBarComponent extends EmberComponent with UILayout {
     canvas.drawRRect(RRect.fromRectAndRadius(r, radius), Paint()..color = backColor);
     final f = max <= 0 ? 0.0 : (value / max).clamp(0.0, 1.0);
     if (f > 0) {
-      canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(r.left, r.top, r.width * f, r.height), radius), Paint()..color = fillColor);
+      final w = r.width * f;
+      canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(fromRight ? r.right - w : r.left, r.top, w, r.height), radius), Paint()..color = fillColor);
     }
     canvas.drawRRect(
       RRect.fromRectAndRadius(r, radius),
@@ -275,12 +295,23 @@ class UIBarComponent extends EmberComponent with UILayout {
             notifyListeners();
           },
         ),
+        InspectableProperty<bool>(
+          name: 'fromRight',
+          label: 'Fill From Right',
+          type: InspectableType.boolean,
+          getter: () => fromRight,
+          setter: (v) {
+            fromRight = v;
+            notifyListeners();
+          },
+        ),
         ...layoutProperties,
       ];
 
   @override
   Map<String, dynamic> toJson() => {
         ...layoutJson(),
+        if (fromRight) 'fromRight': true,
         'value': value,
         'max': max,
         'fillColor': fillColor.toARGB32(),
@@ -296,6 +327,7 @@ class UIBarComponent extends EmberComponent with UILayout {
     fillColor = Color(json['fillColor'] as int? ?? 0xFFEF4444);
     backColor = Color(json['backColor'] as int? ?? 0xCC111318);
     label = json['label'] as String? ?? '';
+    fromRight = json['fromRight'] as bool? ?? false;
     notifyListeners();
   }
 
@@ -314,6 +346,16 @@ class UIButtonComponent extends EmberComponent with UILayout {
   Color textColor;
   double fontSize;
 
+  /// "solid" (filled) or "outline" (see-through with a glowing edge in [color]).
+  String style;
+
+  /// A picture on the left of the text (optional): an image, or a cell of a
+  /// sprite sheet ([iconColumns] × [iconRows], cell [iconFrame]).
+  String icon = '';
+  int iconColumns = 1;
+  int iconRows = 1;
+  int iconFrame = 0;
+
   UIButtonComponent({
     this.text = 'Button',
     this.action = '',
@@ -321,6 +363,7 @@ class UIButtonComponent extends EmberComponent with UILayout {
     this.color = const Color(0xFFF59E0B),
     this.textColor = const Color(0xFF1B1420),
     this.fontSize = 16,
+    this.style = 'solid',
     EmberAnchor anchor = EmberAnchor.center,
     vm.Vector2? offset,
     vm.Vector2? size,
@@ -330,16 +373,59 @@ class UIButtonComponent extends EmberComponent with UILayout {
     this.size = size ?? vm.Vector2(180, 40);
   }
 
+  /// Draws the icon (if any) at the left of [r] and returns the room left for the text.
+  Rect _paintIcon(Canvas canvas, Rect r, double scale) {
+    final image = icon.isEmpty ? null : EmberAssets.instance.image(icon);
+    if (image == null) return r;
+    final side = r.height * 0.8;
+    final dst = Rect.fromLTWH(r.left + r.height * 0.15, r.center.dy - side / 2, side, side);
+    final cols = iconColumns < 1 ? 1 : iconColumns, rows = iconRows < 1 ? 1 : iconRows;
+    final cw = image.width / cols, ch = image.height / rows;
+    final f = iconFrame % (cols * rows);
+    canvas.drawImageRect(image, Rect.fromLTWH((f % cols) * cw, (f ~/ cols) * ch, cw, ch), dst, Paint()..filterQuality = FilterQuality.medium);
+    return Rect.fromLTRB(dst.right + 4 * scale, r.top, r.right - 6 * scale, r.bottom);
+  }
+
   void paint(Canvas canvas, Rect view, double scale, {required bool hovered}) {
     final r = layoutRect(view, scale);
     final rrect = RRect.fromRectAndRadius(r, Radius.circular(8 * scale));
+    if (style == 'outline') {
+      canvas.drawRRect(rrect, Paint()..color = Color.lerp(const Color(0xB0080B18), color, hovered ? 0.28 : 0.1)!);
+      if (hovered) {
+        canvas.drawRRect(
+            rrect,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 4 * scale
+              ..color = color.withValues(alpha: 0.6)
+              ..maskFilter = MaskFilter.blur(BlurStyle.normal, 6 * scale));
+      }
+      canvas.drawRRect(
+          rrect,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5 * scale
+            ..color = color);
+      final room = _paintIcon(canvas, r, scale);
+      final tp = TextPainter(
+        text: TextSpan(
+            text: text,
+            style: TextStyle(color: Color.lerp(color, Colors.white, 0.55), fontSize: fontSize * scale, fontWeight: FontWeight.w700, letterSpacing: 1.2 * scale)),
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: room.width);
+      tp.paint(canvas, Offset(room.center.dx - tp.width / 2, room.center.dy - tp.height / 2));
+      return;
+    }
     canvas.drawRRect(rrect.shift(Offset(0, 3 * scale)), Paint()..color = const Color(0x66000000));
     canvas.drawRRect(rrect, Paint()..color = hovered ? Color.lerp(color, Colors.white, 0.25)! : color);
+    final room = _paintIcon(canvas, r, scale);
     final tp = TextPainter(
       text: TextSpan(text: text, style: TextStyle(color: textColor, fontSize: fontSize * scale, fontWeight: FontWeight.w800)),
+      textAlign: TextAlign.center,
       textDirection: TextDirection.ltr,
-    )..layout(maxWidth: r.width);
-    tp.paint(canvas, Offset(r.center.dx - tp.width / 2, r.center.dy - tp.height / 2));
+    )..layout(maxWidth: room.width);
+    tp.paint(canvas, Offset(room.center.dx - tp.width / 2, room.center.dy - tp.height / 2));
   }
 
   LogicalKeyboardKey? get hotkeyKey {
@@ -397,12 +483,50 @@ class UIButtonComponent extends EmberComponent with UILayout {
             notifyListeners();
           },
         ),
+        InspectableProperty<String>(
+          name: 'icon',
+          label: 'Icon',
+          type: InspectableType.string,
+          getter: () => icon,
+          setter: (v) {
+            icon = v;
+            notifyListeners();
+          },
+          tooltip: 'Image shown left of the text (optional)',
+        ),
+        InspectableProperty<int>(
+          name: 'iconFrame',
+          label: 'Icon Frame',
+          type: InspectableType.integer,
+          getter: () => iconFrame,
+          setter: (v) {
+            iconFrame = v < 0 ? 0 : v;
+            notifyListeners();
+          },
+          min: 0,
+          step: 1,
+          tooltip: 'Cell of the icon sheet (with Icon Columns / Rows)',
+        ),
+        InspectableProperty<String>(
+          name: 'style',
+          label: 'Style',
+          type: InspectableType.options,
+          options: const ['solid', 'outline'],
+          getter: () => style,
+          setter: (v) {
+            style = v;
+            notifyListeners();
+          },
+          tooltip: 'solid: filled; outline: see-through with a glowing edge',
+        ),
         ...layoutProperties,
       ];
 
   @override
   Map<String, dynamic> toJson() => {
         ...layoutJson(),
+        if (style != 'solid') 'style': style,
+        if (icon.isNotEmpty) ...{'icon': icon, 'iconColumns': iconColumns, 'iconRows': iconRows, 'iconFrame': iconFrame},
         'text': text,
         'action': action,
         'hotkey': hotkey,
@@ -420,6 +544,11 @@ class UIButtonComponent extends EmberComponent with UILayout {
     color = Color(json['color'] as int? ?? 0xFFF59E0B);
     textColor = Color(json['textColor'] as int? ?? 0xFF1B1420);
     fontSize = (json['fontSize'] as num?)?.toDouble() ?? 16;
+    style = json['style'] as String? ?? 'solid';
+    icon = json['icon'] as String? ?? '';
+    iconColumns = (json['iconColumns'] as num?)?.toInt() ?? 1;
+    iconRows = (json['iconRows'] as num?)?.toInt() ?? 1;
+    iconFrame = (json['iconFrame'] as num?)?.toInt() ?? 0;
     notifyListeners();
   }
 
@@ -441,6 +570,9 @@ class UIRenderer {
   /// Painted before the scene's UI (set by the Story Player).
   static void Function(Canvas canvas, Rect view, double scale, EmberScene scene)? beforeUI;
 
+  /// More screen widgets (e.g. the minimap), painted after bars and before buttons.
+  static final List<void Function(Canvas, Rect, double, EmberScene)> extraPainters = [];
+
   static void paintAll(Canvas canvas, Rect view, double scale, EmberScene scene) {
     beforeUI?.call(canvas, view, scale, scene);
     for (final img in scene.componentsOf<UIImageComponent>()) {
@@ -448,6 +580,9 @@ class UIRenderer {
     }
     for (final bar in scene.componentsOf<UIBarComponent>()) {
       if (_visible(bar)) bar.paint(canvas, view, scale);
+    }
+    for (final painter in extraPainters) {
+      painter(canvas, view, scale, scene);
     }
     final p = pointer;
     for (final b in scene.componentsOf<UIButtonComponent>()) {

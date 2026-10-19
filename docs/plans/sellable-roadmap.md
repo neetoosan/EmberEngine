@@ -112,7 +112,7 @@ engine-readiness.md.
 | 4.1 | **Prefabs as assets:** save an entity as a `.prefab` file (the serializer already supports it), drag into any scene, edit once and update all copies. `spawn("Crate")` loads prefab files. | L |
 | 4.2 | **Drag-and-drop import:** drop PNG/WAV/OGG/MP3 files onto the editor; sprite-sheet slicer (grid or auto-detect). | M |
 | 4.3 | **Animation editor:** pick frames from a sheet, set FPS and loop, preview; writes Sprite Animator clips. | M |
-| 4.4 | **Gamepad support:** Xbox/PlayStation pads as Input actions and a stick axis, on Windows, Android and web. | M |
+| 4.4 | **Gamepad support** ✅: Xbox/PlayStation/generic pads as Input actions and stick axes on Windows, Android, web, macOS and Linux; up to 4 players (see A1.1 and A7.1 in engine-readiness.md). | M |
 | 4.5 | **Audio mixer and music crossfade**, per-category volume in exported games (settings menu template). | S |
 | 4.6 | **Localization:** string tables per language and `tr("key")` in Ember Script. | M |
 | 4.7 | **Tilemap upgrades:** auto-tiling (rules for edges/corners), multiple tilesets per map. | M |

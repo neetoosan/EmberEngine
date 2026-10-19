@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' as vm;
@@ -8,11 +9,14 @@ import '../../core/event_bus.dart';
 import '../../core/scene.dart';
 import '../../core/transform2d.dart';
 import '../../core/assets.dart';
+import '../combat/combat.dart';
 import '../particles/particle_system.dart';
 import '../physics/rigid_body2d.dart';
 import '../ui/ui_widgets.dart';
+import 'bullet_pool.dart';
 import 'camera2d.dart';
 import 'flame_components.dart';
+import 'light2d.dart';
 import 'line2d.dart';
 import 'parallax.dart';
 
@@ -35,7 +39,6 @@ class EmberFlameGame extends FlameGame {
   @override
   Color backgroundColor() => const Color(0xFF121316);
 
-
   /// The game camera's view while running (null in the editor view).
   CameraView2D? _gameView;
 
@@ -55,6 +58,28 @@ class EmberFlameGame extends FlameGame {
     UIRenderer.paintAll(canvas, view, scale, scene);
   }
 
+  Object? _preloaded;
+
+  /// Starts loading every image the scene uses (hidden templates included),
+  /// so spawned copies appear with their art straight away.
+  void _preload(EmberScene scene) {
+    if (identical(_preloaded, scene)) return;
+    _preloaded = scene;
+    final assets = EmberAssets.instance;
+    for (final c in scene.componentsOf<FlameSpriteComponent>()) {
+      assets.image(c.assetPath);
+    }
+    for (final c in scene.componentsOf<BulletPool2DComponent>()) {
+      assets.image(c.image);
+    }
+    for (final c in scene.componentsOf<UIImageComponent>()) {
+      assets.image(c.assetPath);
+    }
+    for (final c in scene.componentsOf<UIButtonComponent>()) {
+      assets.image(c.icon);
+    }
+  }
+
   /// True when the frame is being drawn through the scene's Camera 2D.
   bool get isGameView => _gameView != null;
 
@@ -65,6 +90,7 @@ class EmberFlameGame extends FlameGame {
     final isRunning = engine.playState != PlayState.stopped;
     final camera = Camera2DComponent.findIn(scene);
     final screen = Size(size.x, size.y);
+    if (isRunning) _preload(scene);
 
     if (isRunning && camera != null) {
       // Game view: letterboxed design area, seen through the scene camera
@@ -77,8 +103,18 @@ class EmberFlameGame extends FlameGame {
       canvas.translate(view.viewport.center.dx, view.viewport.center.dy);
       canvas.scale(view.zoom, view.zoom);
       canvas.translate(-view.center.x, -view.center.y);
-      _drawEntities(canvas, false);
+      if (camera.darkness > 0) {
+        // Lit things first, then the dark (cut by lights), then what glows on its own
+        _drawEntities(canvas, false, emissive: false);
+        Light2DComponent.paintDarkness(canvas, canvas.getLocalClipBounds(), camera.darkness, camera.darknessColor,
+            [for (final l in scene.componentsOf<Light2DComponent>()) if (l.enabled && (l.entity?.enabled ?? false)) l]);
+        _drawEntities(canvas, false, emissive: true);
+      } else {
+        _drawEntities(canvas, false);
+      }
+      _drawHealthBars(canvas, scene);
       canvas.restore();
+      _drawScreenEffects(canvas, view.viewport, camera);
       // UI stays the same size whatever the camera zoom
       _paintUi(canvas, view.viewport, camera.designWidth > 0 ? view.viewport.width / camera.designWidth : 1.0, scene);
       return;
@@ -96,6 +132,7 @@ class EmberFlameGame extends FlameGame {
     if (showGrid && !isRunning) _drawGrid(canvas);
     if (camera != null && !isRunning) _drawCameraFrame(canvas, camera);
     _drawEntities(canvas, showHitboxes && !isRunning);
+    _drawHealthBars(canvas, scene);
     if (!isRunning) _drawSelectionGizmo(canvas);
     final brush = brushRect;
     if (brush != null && !isRunning) {
@@ -119,6 +156,22 @@ class EmberFlameGame extends FlameGame {
     } else {
       _paintUi(canvas, Offset.zero & screen, 1.0, scene);
     }
+  }
+
+  /// Camera vignette and flash, over the world and under the UI.
+  void _drawScreenEffects(Canvas canvas, Rect viewport, Camera2DComponent camera) {
+    if (camera.vignette > 0) {
+      canvas.drawRect(
+          viewport,
+          Paint()
+            ..shader = RadialGradient(
+              radius: 0.75,
+              colors: [const Color(0x00000000), Color.fromRGBO(0, 0, 0, 0.85 * camera.vignette)],
+              stops: const [0.55, 1],
+            ).createShader(viewport));
+    }
+    final flash = camera.flashColor;
+    if (flash.a > 0) canvas.drawRect(viewport, Paint()..color = flash);
   }
 
   /// Outline of what the game camera will show, so levels can be framed in the editor.
@@ -177,6 +230,35 @@ class EmberFlameGame extends FlameGame {
   List<EmberEntity> _sorted = const [];
 
   List<EmberEntity> _drawOrder() {
+    final order = _baseDrawOrder();
+    if (!_anyYSort) return order;
+    // Y-sort: within a layer, entities lower on the screen are drawn in front
+    double bottom(EmberEntity e) {
+      final t = e.getComponent<Transform2DComponent>()!;
+      return t.worldPosition.y - t.anchorOffset.y + t.size.y * t.worldScale.y;
+    }
+
+    final indexed = order.indexed.toList()
+      ..sort((a, b) {
+        final ta = a.$2.getComponent<Transform2DComponent>(), tb = b.$2.getComponent<Transform2DComponent>();
+        final za = ta?.zIndex ?? 0, zb = tb?.zIndex ?? 0;
+        if (za != zb) return za.compareTo(zb);
+        if ((ta?.ySort ?? false) && (tb?.ySort ?? false)) {
+          final d = bottom(a.$2).compareTo(bottom(b.$2));
+          if (d != 0) return d;
+        }
+        return a.$1.compareTo(b.$1);
+      });
+    return [for (final (_, e) in indexed) e];
+  }
+
+  bool _anyYSort = false;
+
+  /// The order entities are drawn in this frame (for tests and tools).
+  @visibleForTesting
+  List<EmberEntity> debugDrawOrder() => _drawOrder();
+
+  List<EmberEntity> _baseDrawOrder() {
     final scene = engine.activeScene;
     if (identical(scene, _sortedScene) && _sortedVersion == EmberEntity.structureVersion) return _sorted;
     _sortedScene = scene;
@@ -188,10 +270,19 @@ class EmberFlameGame extends FlameGame {
         final zb = b.$2.getComponent<Transform2DComponent>()?.zIndex ?? 0;
         return za != zb ? za.compareTo(zb) : a.$1.compareTo(b.$1);
       });
+    _anyYSort = scene.allEntities.any((e) => e.getComponent<Transform2DComponent>()?.ySort ?? false);
     return _sorted = [for (final (_, e) in indexed) e];
   }
 
-  void _drawEntities(Canvas canvas, bool drawHitboxes) {
+  /// True for things that give off their own light: drawn above darkness.
+  static bool _isEmissive(EmberEntity e) =>
+      (e.getComponent<FlameSpriteComponent>()?.additive ?? false) ||
+      (e.getComponent<ParticleEmitter2DComponent>()?.glow ?? false) ||
+      (e.getComponent<BulletPool2DComponent>()?.additive ?? false) ||
+      (e.getComponent<Line2DComponent>()?.glow ?? false);
+
+  /// [emissive] null draws everything; true / false only glowing / other entities.
+  void _drawEntities(Canvas canvas, bool drawHitboxes, {bool? emissive}) {
     final sorted = _drawOrder();
 
     // Visible world area; anything outside it is skipped (long levels stay fast)
@@ -200,6 +291,7 @@ class EmberFlameGame extends FlameGame {
 
     for (final entity in sorted) {
       if (!entity.enabled) continue;
+      if (emissive != null && _isEmissive(entity) != emissive) continue;
       final t2d = entity.getComponent<Transform2DComponent>();
       if (t2d == null) continue;
 
@@ -217,8 +309,12 @@ class EmberFlameGame extends FlameGame {
         final c = camera.position;
         pos = pos + vm.Vector2(c.x * (1 - parallax.factorX), c.y * (1 - parallax.factorY));
       }
+      if (hasParallax) pos = pos + parallax.scrolled;
       final copyWidth = size.x * scale.x.abs();
-      final repeat = hasParallax && parallax.repeatX && copyWidth > 0;
+      final copyHeight = size.y * scale.y.abs();
+      final repeatX = hasParallax && parallax.repeatX && copyWidth > 0;
+      final repeatY = hasParallax && parallax.repeatY && copyHeight > 0;
+      final repeat = repeatX || repeatY;
 
       if (tilemap == null && !repeat) {
         final ext = 2 * (size.x * scale.x.abs() + size.y * scale.y.abs()) + 1;
@@ -228,52 +324,90 @@ class EmberFlameGame extends FlameGame {
         }
       }
 
-      final offsets = <double>[0];
-      if (repeat) {
-        offsets.clear();
-        final first = ((worldClip.left - pos.x) / copyWidth).floor() - 1;
-        // Never draw an unbounded number of copies (e.g. if the view is not clipped)
-        final last = math.min(((worldClip.right - pos.x) / copyWidth).ceil() + 1, first + _maxParallaxCopies);
-        for (var k = first; k <= last; k++) {
-          offsets.add(k * copyWidth);
-        }
+      // Copies needed to fill the view along a repeating axis
+      // (never an unbounded number, e.g. if the view is not clipped)
+      List<double> copies(bool on, double lo, double hi, double at, double step) {
+        if (!on) return const [0];
+        final first = ((lo - at) / step).floor() - 1;
+        final last = math.min(((hi - at) / step).ceil() + 1, first + _maxParallaxCopies);
+        return [for (var k = first; k <= last; k++) k * step];
       }
 
-      for (final dx in offsets) {
-        canvas.save();
-        canvas.translate(pos.x + dx, pos.y);
-        canvas.rotate(rot);
-        canvas.scale(scale.x, scale.y);
-        canvas.translate(-anchorOffset.x, -anchorOffset.y);
+      // A repeating whole-image layer is one rectangle filled with a repeating
+      // image shader: no seams between copies, and one draw however many fit
+      if (repeat && tilemap == null && rot == 0 && _drawTiledLayer(canvas, entity, pos, copyWidth, copyHeight, repeatX, repeatY, worldClip)) {
+        _drawWorldSpaceOf(canvas, entity);
+        continue;
+      }
 
-        // Draw TileMap if present (empty-cell outlines only while editing)
-        if (tilemap != null) {
-          _renderTileMap(canvas, tilemap, outlineEmpty: engine.playState == PlayState.stopped);
-        }
+      final xs = copies(repeatX, worldClip.left, worldClip.right, pos.x, copyWidth);
+      final ys = copies(repeatY, worldClip.top, worldClip.bottom, pos.y, copyHeight);
+      for (final dy in ys) {
+        for (final dx in xs) {
+          canvas.save();
+          canvas.translate(pos.x + dx, pos.y + dy);
+          canvas.rotate(rot);
+          canvas.scale(scale.x, scale.y);
+          canvas.translate(-anchorOffset.x, -anchorOffset.y);
 
-        // Draw Sprite, or (in the editor only) a placeholder so invisible entities can be found
-        final sprite = entity.getComponent<FlameSpriteComponent>();
-        if (sprite != null) {
-          _renderSprite(canvas, sprite, size);
-        } else if (tilemap == null && engine.playState == PlayState.stopped && size.x > 0 && size.y > 0) {
-          _renderEntityPlaceholder(canvas, entity.name, size);
-        }
-
-        // Draw Hitbox outlines
-        if (drawHitboxes) {
-          final hitbox = entity.getComponent<FlameHitbox2DComponent>();
-          if (hitbox != null && hitbox.debugDraw) {
-            _renderHitbox(canvas, hitbox, size);
+          // Draw TileMap if present (empty-cell outlines only while editing)
+          if (tilemap != null) {
+            _renderTileMap(canvas, tilemap, outlineEmpty: engine.playState == PlayState.stopped);
           }
-          final body = entity.getComponent<RigidBody2DComponent>();
-          if (body != null && body.enabled) _renderBodyOutline(canvas, body, t2d);
-        }
 
-        canvas.restore();
+          // Draw Sprite, or (in the editor only) a placeholder so invisible entities can be found
+          final sprite = entity.getComponent<FlameSpriteComponent>();
+          if (sprite != null) {
+            _renderSprite(canvas, sprite, size);
+          } else if (tilemap == null && engine.playState == PlayState.stopped && size.x > 0 && size.y > 0) {
+            _renderEntityPlaceholder(canvas, entity.name, size);
+          }
+
+          // Draw Hitbox outlines
+          if (drawHitboxes) {
+            final hitbox = entity.getComponent<FlameHitbox2DComponent>();
+            if (hitbox != null && hitbox.debugDraw) {
+              _renderHitbox(canvas, hitbox, size);
+            }
+            final body = entity.getComponent<RigidBody2DComponent>();
+            if (body != null && body.enabled) _renderBodyOutline(canvas, body, t2d);
+          }
+
+          canvas.restore();
+        }
       }
 
       _drawWorldSpaceOf(canvas, entity);
     }
+  }
+
+  /// Draws a repeating parallax layer as one shader-filled rectangle. Returns
+  /// false when it can't (no plain image yet, a sheet frame, or a flip).
+  bool _drawTiledLayer(Canvas canvas, EmberEntity entity, vm.Vector2 pos, double w, double h, bool repeatX, bool repeatY, Rect clip) {
+    final sprite = entity.getComponent<FlameSpriteComponent>();
+    if (sprite == null || sprite.frameCount != 1 || sprite.flipX || sprite.flipY || w <= 0 || h <= 0) return false;
+    final image = EmberAssets.instance.image(sprite.assetPath);
+    if (image == null) return false;
+    final area = Rect.fromLTRB(
+      repeatX ? clip.left : pos.x,
+      repeatY ? clip.top : pos.y,
+      repeatX ? clip.right : pos.x + w,
+      repeatY ? clip.bottom : pos.y + h,
+    );
+    if (area.isEmpty) return true;
+    final matrix = vm.Matrix4.identity()
+      ..translateByDouble(pos.x, pos.y, 0, 1)
+      ..scaleByDouble(w / image.width, h / image.height, 1, 1);
+    final isUntinted = sprite.tint.toARGB32() == 0xFFFFFFFF;
+    canvas.drawRect(
+        area,
+        Paint()
+          ..shader = ImageShader(image, repeatX ? TileMode.repeated : TileMode.decal, repeatY ? TileMode.repeated : TileMode.decal, matrix.storage,
+              filterQuality: sprite.smooth ? FilterQuality.medium : FilterQuality.none)
+          ..color = Color.fromRGBO(255, 255, 255, sprite.opacity)
+          ..blendMode = sprite.additive ? BlendMode.plus : BlendMode.srcOver
+          ..colorFilter = isUntinted ? null : ColorFilter.mode(sprite.tint, BlendMode.modulate));
+    return true;
   }
 
   /// 2D particles and lines live in world space, so they are drawn outside
@@ -285,6 +419,30 @@ class EmberFlameGame extends FlameGame {
     }
     final line = entity.getComponent<Line2DComponent>();
     if (line != null && line.enabled) line.paint(canvas);
+    final bullets = entity.getComponent<BulletPool2DComponent>();
+    if (bullets != null && bullets.enabled) bullets.paint(canvas);
+  }
+
+  /// Health bars above hurt entities, on top of everything in the world.
+  void _drawHealthBars(Canvas canvas, EmberScene scene) {
+    for (final health in scene.componentsOf<HealthComponent>()) {
+      final entity = health.entity;
+      if (entity == null || !entity.enabled || !health.showBar || health.isDead || health.health >= health.maxHealth) continue;
+      _renderHealthBar(canvas, health, Combat.bodyOf(entity));
+    }
+  }
+
+  /// A small rounded bar above [body]: green when healthy, through amber to red.
+  void _renderHealthBar(Canvas canvas, HealthComponent health, Rect body) {
+    final f = (health.health / health.maxHealth).clamp(0.0, 1.0);
+    final w = body.width.clamp(24.0, 64.0);
+    final back = Rect.fromCenter(center: Offset(body.center.dx, body.top - 7), width: w, height: 5);
+    canvas.drawRRect(RRect.fromRectAndRadius(back.inflate(1), const Radius.circular(3)), Paint()..color = const Color(0xB0101318));
+    final color = f > 0.5
+        ? Color.lerp(const Color(0xFFFACC15), const Color(0xFF4ADE80), (f - 0.5) * 2)!
+        : Color.lerp(const Color(0xFFEF4444), const Color(0xFFFACC15), f * 2)!;
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(back.left, back.top, back.width * f, back.height), const Radius.circular(2.5)),
+        Paint()..color = color);
   }
 
   /// Rigid body collider (editor): orange dynamic, grey static, blue kinematic, dashed-looking thin for sensors.
@@ -312,7 +470,46 @@ class EmberFlameGame extends FlameGame {
     }
   }
 
+  /// A soft white dot (bright centre, fading edge) for glowing particles.
+  static ui.Image? _softDot;
+  static ui.Image get softDot => _softDot ??= () {
+    final rec = ui.PictureRecorder();
+    const r = 32.0;
+    Canvas(rec).drawCircle(
+      const Offset(r, r),
+      r,
+      Paint()
+        ..shader = const RadialGradient(
+          colors: [Color(0xFFFFFFFF), Color(0xB0FFFFFF), Color(0x30FFFFFF), Color(0x00FFFFFF)],
+          stops: [0, 0.25, 0.6, 1],
+        ).createShader(Rect.fromCircle(center: const Offset(r, r), radius: r)),
+    );
+    return rec.endRecording().toImageSync(64, 64);
+  }();
+
   void _renderParticles2D(Canvas canvas, ParticleEmitter2DComponent emitter) {
+    if (emitter.glow) {
+      final ps = emitter.particles;
+      if (ps.isEmpty) return;
+      final dot = softDot;
+      final transforms = [
+        for (final p in ps)
+          RSTransform.fromComponents(rotation: 0, scale: p.size * 2.4 / 64, anchorX: 32, anchorY: 32, translateX: p.position.x, translateY: p.position.y),
+      ];
+      final rects = List.filled(ps.length, const Rect.fromLTWH(0, 0, 64, 64));
+      canvas.drawAtlas(
+        dot,
+        transforms,
+        rects,
+        [for (final p in ps) p.color],
+        BlendMode.modulate,
+        null,
+        Paint()
+          ..blendMode = BlendMode.plus
+          ..filterQuality = FilterQuality.medium,
+      );
+      return;
+    }
     final particlePaint = Paint()..style = PaintingStyle.fill;
     for (final p in emitter.particles) {
       particlePaint.color = p.color;
@@ -326,6 +523,10 @@ class EmberFlameGame extends FlameGame {
   static const double _texelInset = 0.02;
 
   void _renderTileMap(Canvas canvas, FlameTileMapComponent tilemap, {required bool outlineEmpty}) {
+    if (tilemap.layout != 'square') {
+      _renderShapedTileMap(canvas, tilemap, outlineEmpty: outlineEmpty);
+      return;
+    }
     final ts = tilemap.tileSize;
     final tilePaint = Paint()..style = PaintingStyle.fill;
     final strokePaint = Paint()
@@ -335,7 +536,9 @@ class EmberFlameGame extends FlameGame {
     final tileset = tilemap.tilesetPath.isEmpty ? null : EmberAssets.instance.image(tilemap.tilesetPath);
     final imagePaint = Paint()
       ..isAntiAlias = false
-      ..filterQuality = FilterQuality.none;
+      ..filterQuality = tilemap.smooth ? FilterQuality.medium : FilterQuality.none;
+    // Smooth sampling blends with neighbouring cells unless it stays half a texel inside
+    final inset = tilemap.smooth ? 0.6 : _texelInset;
 
     // Only the cells inside the visible area are drawn
     final clip = canvas.getLocalClipBounds();
@@ -354,7 +557,7 @@ class EmberFlameGame extends FlameGame {
             final cell = tilemap.tilesetTileSize.toDouble();
             final i = tid - 1;
             final src = Rect.fromLTWH((i % tilemap.tilesetColumns) * cell, (i ~/ tilemap.tilesetColumns) * cell, cell, cell);
-            canvas.drawImageRect(tileset, src.deflate(_texelInset), rect, imagePaint);
+            canvas.drawImageRect(tileset, src.deflate(inset), rect, imagePaint);
           } else {
             // Palette color representation based on tile ID
             final hue = (tid * 45.0) % 360.0;
@@ -365,6 +568,81 @@ class EmberFlameGame extends FlameGame {
         if ((tid > 0 && tileset == null) || outlineEmpty) canvas.drawRect(rect, strokePaint);
       }
     }
+  }
+
+  /// Isometric or hex maps: each tile drawn with its image bottom on the
+  /// cell's bottom, back to front so taller tiles overlap the ones behind.
+  void _renderShapedTileMap(Canvas canvas, FlameTileMapComponent map, {required bool outlineEmpty}) {
+    final ts = map.tileSize;
+    final iso = map.layout == 'isometric';
+    final cellW = iso ? ts * 2 : ts;
+    final cellH = iso ? ts : ts * 1.1547005383792515;
+    final tileset = map.tilesetPath.isEmpty ? null : EmberAssets.instance.image(map.tilesetPath);
+    final paint = Paint()..filterQuality = map.smooth ? FilterQuality.medium : FilterQuality.none;
+    final clip = canvas.getLocalClipBounds();
+    final cols = map.columns, rows = map.rows;
+    final outline = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = const Color(0xFF282C37);
+    void draw(int c, int r) {
+      final center = iso ? map.isoCenter(c, r, ts) : map.hexCenter(c, r, ts);
+      final id = map.getTile(c, r);
+      if (id <= 0) {
+        if (outlineEmpty) canvas.drawPath(_cellShape(center, cellW, cellH, iso), outline);
+        return;
+      }
+      if (tileset == null) {
+        canvas.drawPath(_cellShape(center, cellW, cellH, iso), Paint()..color = HSLColor.fromAHSL(0.85, (id * 45.0) % 360, 0.6, 0.45).toColor());
+        return;
+      }
+      final cw = map.tilesetTileSize.toDouble();
+      final rowsInSet = map.tilesetRows > 0 ? map.tilesetRows : (tileset.height / cw).floor().clamp(1, 1 << 20);
+      final rowH = tileset.height / rowsInSet;
+      final i = id - 1;
+      final src = Rect.fromLTWH((i % map.tilesetColumns) * cw, (i ~/ map.tilesetColumns) * rowH, cw, rowH);
+      final destH = cellW * rowH / cw;
+      final dst = Rect.fromLTWH(center.dx - cellW / 2, center.dy + cellH / 2 - destH, cellW, destH);
+      if (!dst.overlaps(clip)) return;
+      canvas.drawImageRect(tileset, src.deflate(map.smooth ? 0.6 : _texelInset), dst, paint);
+    }
+
+    if (iso) {
+      for (var s = 0; s <= cols + rows - 2; s++) {
+        for (var c = 0; c < cols; c++) {
+          final r = s - c;
+          if (r >= 0 && r < rows) draw(c, r);
+        }
+      }
+    } else {
+      for (var r = 0; r < rows; r++) {
+        for (var c = 0; c < cols; c++) {
+          draw(c, r);
+        }
+      }
+    }
+  }
+
+  static Path _cellShape(Offset c, double w, double h, bool iso) {
+    if (iso) {
+      return Path()
+        ..moveTo(c.dx, c.dy - h / 2)
+        ..lineTo(c.dx + w / 2, c.dy)
+        ..lineTo(c.dx, c.dy + h / 2)
+        ..lineTo(c.dx - w / 2, c.dy)
+        ..close();
+    }
+    final p = Path();
+    for (var k = 0; k < 6; k++) {
+      final a = math.pi / 3 * k - math.pi / 2;
+      final pt = Offset(c.dx + math.cos(a) * h / 2, c.dy + math.sin(a) * h / 2);
+      if (k == 0) {
+        p.moveTo(pt.dx, pt.dy);
+      } else {
+        p.lineTo(pt.dx, pt.dy);
+      }
+    }
+    return p..close();
   }
 
   void _renderSprite(Canvas canvas, FlameSpriteComponent sprite, vm.Vector2 size) {
@@ -385,16 +663,30 @@ class EmberFlameGame extends FlameGame {
         ..isAntiAlias = false
         ..filterQuality = sprite.smooth ? FilterQuality.medium : FilterQuality.none
         ..color = Color.fromRGBO(255, 255, 255, sprite.opacity)
+        ..blendMode = sprite.additive ? BlendMode.plus : BlendMode.srcOver
         ..colorFilter = isUntinted ? null : ColorFilter.mode(sprite.tint, BlendMode.modulate);
       canvas.save();
       if (sprite.flipX || sprite.flipY) {
         canvas.translate(sprite.flipX ? size.x : 0, sprite.flipY ? size.y : 0);
         canvas.scale(sprite.flipX ? -1 : 1, sprite.flipY ? -1 : 1);
       }
-      canvas.drawImageRect(image, cols * rows > 1 ? src.deflate(_texelInset) : src, rect, imagePaint);
+      final from = cols * rows > 1 ? src.deflate(_texelInset) : src;
+      canvas.drawImageRect(image, from, rect, imagePaint);
+      if (sprite.flash > 0) {
+        // The sprite's shape in white, over it
+        canvas.drawImageRect(
+            image,
+            from,
+            rect,
+            Paint()
+              ..filterQuality = imagePaint.filterQuality
+              ..colorFilter = ColorFilter.mode(Color.fromRGBO(255, 255, 255, (sprite.flash * 0.6 * sprite.opacity).clamp(0.0, 1.0)), BlendMode.srcIn));
+      }
       canvas.restore();
       return;
     }
+    // While the game runs, an image that is still loading draws nothing
+    if (engine.playState != PlayState.stopped && sprite.assetPath.isNotEmpty && !EmberAssets.instance.isMissing(sprite.assetPath)) return;
 
     final paint = Paint()
       ..color = sprite.tint.withValues(alpha: sprite.opacity)
@@ -403,9 +695,7 @@ class EmberFlameGame extends FlameGame {
     // Stylish placeholder: Flame accent gradient, or the sprite's tint when one is set
     final isUntinted = sprite.tint.toARGB32() == 0xFFFFFFFF;
     final base = isUntinted ? const Color(0xFF00F5D4) : sprite.tint;
-    final shade = isUntinted
-        ? const Color(0xFF00B4D8)
-        : Color.lerp(sprite.tint, const Color(0xFF000000), 0.35)!;
+    final shade = isUntinted ? const Color(0xFF00B4D8) : Color.lerp(sprite.tint, const Color(0xFF000000), 0.35)!;
     final gradient = LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
@@ -430,20 +720,12 @@ class EmberFlameGame extends FlameGame {
     final textPainter = TextPainter(
       text: const TextSpan(
         text: '2D',
-        style: TextStyle(
-          color: Color(0xFF121316),
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-          fontFamily: 'monospace',
-        ),
+        style: TextStyle(color: Color(0xFF121316), fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
 
-    textPainter.paint(
-      canvas,
-      Offset((size.x - textPainter.width) / 2, (size.y - textPainter.height) / 2),
-    );
+    textPainter.paint(canvas, Offset((size.x - textPainter.width) / 2, (size.y - textPainter.height) / 2));
   }
 
   void _renderEntityPlaceholder(Canvas canvas, String name, vm.Vector2 size) {
@@ -469,20 +751,11 @@ class EmberFlameGame extends FlameGame {
       ..strokeWidth = 1.5;
 
     if (hitbox.shape == Hitbox2DShape.rectangle) {
-      final rect = Rect.fromLTWH(
-        hitbox.offset.x,
-        hitbox.offset.y,
-        hitbox.size.x,
-        hitbox.size.y,
-      );
+      final rect = Rect.fromLTWH(hitbox.offset.x, hitbox.offset.y, hitbox.size.x, hitbox.size.y);
       canvas.drawRect(rect, paint);
     } else {
       final radius = hitbox.size.x / 2;
-      canvas.drawCircle(
-        Offset(hitbox.offset.x + radius, hitbox.offset.y + radius),
-        radius,
-        paint,
-      );
+      canvas.drawCircle(Offset(hitbox.offset.x + radius, hitbox.offset.y + radius), radius, paint);
     }
   }
 
@@ -523,19 +796,10 @@ class EmberFlameGame extends FlameGame {
       ..strokeWidth = 1.0 / zoom;
 
     const handleSize = 6.0;
-    final corners = [
-      Offset.zero,
-      Offset(size.x, 0),
-      Offset(0, size.y),
-      Offset(size.x, size.y),
-    ];
+    final corners = [Offset.zero, Offset(size.x, 0), Offset(0, size.y), Offset(size.x, size.y)];
 
     for (final c in corners) {
-      final handleRect = Rect.fromCenter(
-        center: c,
-        width: handleSize / zoom,
-        height: handleSize / zoom,
-      );
+      final handleRect = Rect.fromCenter(center: c, width: handleSize / zoom, height: handleSize / zoom);
       canvas.drawRect(handleRect, handlePaint);
       canvas.drawRect(handleRect, handleStroke);
     }

@@ -22,6 +22,13 @@ class FlameSpriteComponent extends EmberComponent {
   /// Smooth (bilinear) scaling; off keeps pixel art crisp.
   bool smooth;
 
+  /// Adds its colours to what is behind it, like light: glows, lasers, fire.
+  bool additive;
+
+  /// A white flash over the sprite, 0 (none) .. 1 (fully white). Set by
+  /// Health's white hit flash; not saved.
+  double flash = 0;
+
   FlameSpriteComponent({
     this._assetPath = 'assets/sprites/default_character.png',
     this._tint = Colors.white,
@@ -32,6 +39,7 @@ class FlameSpriteComponent extends EmberComponent {
     this.rows = 1,
     this._frame = 0,
     this.smooth = false,
+    this.additive = false,
   });
 
   int get frameCount => (columns < 1 ? 1 : columns) * (rows < 1 ? 1 : rows);
@@ -166,6 +174,17 @@ class FlameSpriteComponent extends EmberComponent {
           },
           tooltip: 'Off keeps pixel art crisp',
         ),
+        InspectableProperty<bool>(
+          name: 'additive',
+          label: 'Glow (additive)',
+          type: InspectableType.boolean,
+          getter: () => additive,
+          setter: (val) {
+            additive = val;
+            notifyListeners();
+          },
+          tooltip: 'Bright colours add up like light (glows, lasers, fire)',
+        ),
       ];
 
   @override
@@ -180,6 +199,7 @@ class FlameSpriteComponent extends EmberComponent {
       'rows': rows,
       'frame': _frame,
       'smooth': smooth,
+      if (additive) 'additive': true,
     };
   }
 
@@ -194,6 +214,7 @@ class FlameSpriteComponent extends EmberComponent {
     rows = (json['rows'] as num?)?.toInt() ?? 1;
     _frame = (json['frame'] as num?)?.toInt() ?? 0;
     smooth = json['smooth'] as bool? ?? false;
+    additive = json['additive'] as bool? ?? false;
     notifyListeners();
   }
 
@@ -209,6 +230,7 @@ class FlameSpriteComponent extends EmberComponent {
       rows: rows,
       frame: _frame,
       smooth: smooth,
+      additive: additive,
     );
   }
 }
@@ -423,6 +445,24 @@ class FlameTileMapComponent extends EmberComponent {
   /// layers (e.g. tree tops drawn above the player with a higher Z-Index).
   bool collision;
 
+  /// Smooth (bilinear) scaling of the tileset, for painted tiles drawn
+  /// smaller or larger than they were made. Off keeps pixel art crisp.
+  bool smooth;
+
+  /// "square" (the default), "isometric" (diamonds 2 × tile size wide and
+  /// 1 × tall, for city builders and strategy) or "hex" (pointy-top hexagons
+  /// tile size wide, odd rows shifted half a hex right). Tileset cells are
+  /// drawn with their bottom on the bottom of the cell, so tall tiles (trees,
+  /// walls) stick up; they are drawn back to front.
+  String layout;
+
+  /// Rows in the tileset image for isometric / hex maps, whose tile images
+  /// need not be square (0: square cells).
+  int tilesetRows = 0;
+
+  /// Cells scripts marked as blocked for [findPath] (buildings, units). Not saved.
+  final Set<int> blockedCells = {};
+
   FlameTileMapComponent({
     this._columns = 16,
     this._rows = 12,
@@ -433,6 +473,8 @@ class FlameTileMapComponent extends EmberComponent {
     this.tilesetTileSize = 16,
     Map<int, TileKind>? tileKinds,
     this.collision = true,
+    this.smooth = false,
+    this.layout = 'square',
   }) : tileKinds = tileKinds ?? {} {
     _tiles = tiles ?? List.filled(_columns * _rows, 0);
   }
@@ -496,16 +538,131 @@ class FlameTileMapComponent extends EmberComponent {
   /// World-space rectangle of cell ([col], [row]).
   Rect cellRect(int col, int row) {
     final (ox, oy, ts) = _worldGrid();
+    if (layout == 'isometric') {
+      final c = isoCenter(col, row, ts);
+      return Rect.fromCenter(center: Offset(ox + c.dx, oy + c.dy), width: ts * 2, height: ts);
+    }
+    if (layout == 'hex') {
+      final c = hexCenter(col, row, ts);
+      return Rect.fromCenter(center: Offset(ox + c.dx, oy + c.dy), width: ts, height: ts * _hexHeight);
+    }
     return Rect.fromLTWH(ox + col * ts, oy + row * ts, ts, ts);
+  }
+
+  static const double _hexHeight = 1.1547005383792515; // 2 / sqrt(3)
+
+  /// Centre of an isometric cell in local space ([ts] = tile size).
+  Offset isoCenter(int col, int row, double ts) => Offset((col - row) * ts + _rows * ts, (col + row) * ts / 2 + ts / 2);
+
+  /// Centre of a hex cell in local space.
+  Offset hexCenter(int col, int row, double ts) => Offset(col * ts + ts / 2 + (row.isOdd ? ts / 2 : 0), row * ts * _hexHeight * 0.75 + ts * _hexHeight / 2);
+
+  /// Size of the whole map in local space.
+  Size get extent {
+    final ts = _tileSize;
+    if (layout == 'isometric') return Size((_columns + _rows) * ts, (_columns + _rows) * ts / 2);
+    if (layout == 'hex') return Size(_columns * ts + ts / 2, (_rows - 1) * ts * _hexHeight * 0.75 + ts * _hexHeight);
+    return Size(_columns * ts, _rows * ts);
   }
 
   /// Grid cell under a world position, or null if outside the map.
   (int, int)? cellAt(double worldX, double worldY) {
     final (ox, oy, ts) = _worldGrid();
-    final c = ((worldX - ox) / ts).floor();
-    final r = ((worldY - oy) / ts).floor();
+    final x = worldX - ox, y = worldY - oy;
+    int c, r;
+    if (layout == 'isometric') {
+      final u = (x - _rows * ts) / ts, v = y / (ts / 2);
+      c = ((v + u) / 2).floor();
+      r = ((v - u) / 2).floor();
+    } else if (layout == 'hex') {
+      // The nearest hex centre (hexes are exactly the cells nearest their centre)
+      final guess = (y / (ts * _hexHeight * 0.75)).floor();
+      var best = (-1, -1);
+      var bestD = double.infinity;
+      for (var rr = guess - 1; rr <= guess + 1; rr++) {
+        final cc0 = ((x - (rr.isOdd ? ts / 2 : 0)) / ts).floor();
+        for (var cc = cc0 - 1; cc <= cc0 + 1; cc++) {
+          final p = hexCenter(cc, rr, ts);
+          final d = (p.dx - x) * (p.dx - x) + (p.dy - y) * (p.dy - y);
+          if (d < bestD) {
+            bestD = d;
+            best = (cc, rr);
+          }
+        }
+      }
+      (c, r) = best;
+    } else {
+      c = (x / ts).floor();
+      r = (y / ts).floor();
+    }
     if (c < 0 || r < 0 || c >= _columns || r >= _rows) return null;
     return (c, r);
+  }
+
+  /// Neighbouring cells: 4 on square and isometric maps, 6 on hex maps.
+  List<(int, int)> neighbours(int col, int row) {
+    final List<(int, int)> d;
+    if (layout == 'hex') {
+      d = row.isOdd ? const [(1, 0), (-1, 0), (0, -1), (1, -1), (0, 1), (1, 1)] : const [(1, 0), (-1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1)];
+    } else {
+      d = const [(1, 0), (-1, 0), (0, 1), (0, -1)];
+    }
+    return [
+      for (final (dc, dr) in d)
+        if (col + dc >= 0 && row + dr >= 0 && col + dc < _columns && row + dr < _rows) (col + dc, row + dr),
+    ];
+  }
+
+  bool isWalkable(int col, int row) {
+    if (col < 0 || row < 0 || col >= _columns || row >= _rows) return false;
+    if (blockedCells.contains(row * _columns + col)) return false;
+    final id = _tiles[row * _columns + col];
+    return id > 0 && !kindOf(id).blocks;
+  }
+
+  /// The shortest walk between two cells over walkable tiles (A*), from the
+  /// first step to the goal, or null if there is none. Empty tiles (id 0) and
+  /// solid tiles block, and so do [blockedCells].
+  List<(int, int)>? findPath(int c0, int r0, int c1, int r1, {int maxExpanded = 8000}) {
+    if (!isWalkable(c1, r1)) return null;
+    if (c0 == c1 && r0 == r1) return const [];
+    int key(int c, int r) => r * _columns + c;
+    double h(int c, int r) => ((c - c1).abs() + (r - r1).abs()).toDouble();
+    final g = <int, double>{key(c0, r0): 0};
+    final from = <int, int>{};
+    final open = <(double, int, int)>[(h(c0, r0), c0, r0)];
+    final closed = <int>{};
+    var expanded = 0;
+    while (open.isNotEmpty) {
+      var bi = 0;
+      for (var i = 1; i < open.length; i++) {
+        if (open[i].$1 < open[bi].$1) bi = i;
+      }
+      final (_, c, r) = open.removeAt(bi);
+      final k = key(c, r);
+      if (c == c1 && r == r1) break;
+      if (!closed.add(k)) continue;
+      if (++expanded > maxExpanded) return null;
+      for (final (nc, nr) in neighbours(c, r)) {
+        if (!isWalkable(nc, nr)) continue;
+        final nk = key(nc, nr);
+        final cost = g[k]! + 1;
+        if (cost < (g[nk] ?? double.infinity)) {
+          g[nk] = cost;
+          from[nk] = k;
+          open.add((cost + h(nc, nr), nc, nr));
+        }
+      }
+    }
+    final goal = key(c1, r1);
+    if (!from.containsKey(goal)) return null;
+    final out = <(int, int)>[];
+    var cur = goal;
+    while (cur != key(c0, r0)) {
+      out.add((cur % _columns, cur ~/ _columns));
+      cur = from[cur]!;
+    }
+    return out.reversed.toList();
   }
 
   double get tileSize => _tileSize;
@@ -534,6 +691,13 @@ class FlameTileMapComponent extends EmberComponent {
     if (col < 0 || col >= _columns || row < 0 || row >= _rows) return;
     if (_tiles[row * _columns + col] == tileId) return;
     _tiles[row * _columns + col] = tileId;
+    notifyListeners();
+  }
+
+  /// Replaces every tile at once ([tiles] is row by row, columns × rows long).
+  void setTiles(List<int> tiles) {
+    if (tiles.length != _columns * _rows) throw ArgumentError('expected ${_columns * _rows} tiles, got ${tiles.length}');
+    _tiles = List<int>.of(tiles);
     notifyListeners();
   }
 
@@ -631,12 +795,38 @@ class FlameTileMapComponent extends EmberComponent {
           },
           tooltip: 'Off for decoration layers characters walk through',
         ),
+        InspectableProperty<bool>(
+          name: 'smooth',
+          label: 'Smooth Scaling',
+          type: InspectableType.boolean,
+          getter: () => smooth,
+          setter: (val) {
+            smooth = val;
+            notifyListeners();
+          },
+          tooltip: 'For painted tiles; off keeps pixel art crisp',
+        ),
+        InspectableProperty<String>(
+          name: 'layout',
+          label: 'Layout',
+          type: InspectableType.options,
+          options: const ['square', 'isometric', 'hex'],
+          getter: () => layout,
+          setter: (val) {
+            layout = val;
+            notifyListeners();
+          },
+          tooltip: 'square, isometric (strategy, city builders) or hex',
+        ),
       ];
 
   @override
   Map<String, dynamic> toJson() {
     return {
       'collision': collision,
+      if (smooth) 'smooth': true,
+      if (layout != 'square') 'layout': layout,
+      if (tilesetRows > 0) 'tilesetRows': tilesetRows,
       'columns': _columns,
       'rows': _rows,
       'tileSize': _tileSize,
@@ -660,6 +850,9 @@ class FlameTileMapComponent extends EmberComponent {
       _tiles = List.filled(_columns * _rows, 0);
     }
     collision = json['collision'] as bool? ?? true;
+    smooth = json['smooth'] as bool? ?? false;
+    layout = json['layout'] as String? ?? 'square';
+    tilesetRows = (json['tilesetRows'] as num?)?.toInt() ?? 0;
     tilesetPath = json['tilesetPath'] as String? ?? '';
     tilesetColumns = (json['tilesetColumns'] as num?)?.toInt() ?? 8;
     tilesetTileSize = (json['tilesetTileSize'] as num?)?.toInt() ?? 16;

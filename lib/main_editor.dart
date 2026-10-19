@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'core/crash_reporter.dart';
+import 'core/gamepad.dart';
 import 'core/scene.dart';
 import 'editor/ember_editor_app.dart';
 import 'editor/hub/project_manifest.dart';
@@ -29,5 +30,6 @@ Future<void> main() async {
     }
   }
 
+  GamepadInput.instance.start(); // pads work in Play mode too
   runApp(const EmberEditorApp());
 }

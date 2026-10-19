@@ -22,6 +22,12 @@ class UITextComponent extends EmberComponent {
   /// Dark outline so text stays readable on any background.
   bool outline;
 
+  /// A soft light in the text's own colour around it (neon titles).
+  bool glow;
+
+  /// Extra space between letters, in design pixels (wide headings).
+  double letterSpacing;
+
   UITextComponent({
     this._text = 'Text',
     this.fontSize = 24.0,
@@ -30,6 +36,8 @@ class UITextComponent extends EmberComponent {
     vm.Vector2? offset,
     this.bold = true,
     this.outline = true,
+    this.glow = false,
+    this.letterSpacing = 0,
   }) : offset = offset ?? vm.Vector2(0, 16);
 
   String get text => _text;
@@ -52,6 +60,7 @@ class UITextComponent extends EmberComponent {
       fontSize: fontSize * scale,
       fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
       height: 1.1,
+      letterSpacing: letterSpacing == 0 ? null : letterSpacing * scale,
     );
     final a = anchor.normalizedOffset;
     final align = a.x < 0.25 ? TextAlign.left : (a.x > 0.75 ? TextAlign.right : TextAlign.center);
@@ -70,6 +79,12 @@ class UITextComponent extends EmberComponent {
     // Anchor the text box at the same relative point (top-center text hangs below the point, etc.)
     final topLeft = point - Offset(fillPainter.width * a.x, fillPainter.height * a.y);
 
+    if (glow) {
+      final light = Paint()
+        ..color = color.withValues(alpha: color.a * 0.75)
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, (fontSize * scale / 5).clamp(2.0, 24.0));
+      layout(light, null).paint(canvas, topLeft);
+    }
     if (outline) {
       final stroke = Paint()
         ..style = PaintingStyle.stroke
@@ -157,6 +172,28 @@ class UITextComponent extends EmberComponent {
             notifyListeners();
           },
         ),
+        InspectableProperty<bool>(
+          name: 'glow',
+          label: 'Glow',
+          type: InspectableType.boolean,
+          getter: () => glow,
+          setter: (val) {
+            glow = val;
+            notifyListeners();
+          },
+          tooltip: 'A soft light in the text colour (neon titles)',
+        ),
+        InspectableProperty<double>(
+          name: 'letterSpacing',
+          label: 'Letter Spacing',
+          type: InspectableType.number,
+          getter: () => letterSpacing,
+          setter: (val) {
+            letterSpacing = val;
+            notifyListeners();
+          },
+          step: 0.5,
+        ),
       ];
 
   @override
@@ -168,6 +205,8 @@ class UITextComponent extends EmberComponent {
         'offset': [offset.x, offset.y],
         'bold': bold,
         'outline': outline,
+        if (glow) 'glow': true,
+        if (letterSpacing != 0) 'letterSpacing': letterSpacing,
       };
 
   @override
@@ -180,6 +219,8 @@ class UITextComponent extends EmberComponent {
     offset = o == null ? vm.Vector2(0, 16) : vm.Vector2((o[0] as num).toDouble(), (o[1] as num).toDouble());
     bold = json['bold'] as bool? ?? true;
     outline = json['outline'] as bool? ?? true;
+    glow = json['glow'] as bool? ?? false;
+    letterSpacing = (json['letterSpacing'] as num?)?.toDouble() ?? 0;
     notifyListeners();
   }
 
@@ -192,6 +233,8 @@ class UITextComponent extends EmberComponent {
         offset: offset.clone(),
         bold: bold,
         outline: outline,
+        glow: glow,
+        letterSpacing: letterSpacing,
       );
 }
 

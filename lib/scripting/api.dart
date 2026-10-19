@@ -12,7 +12,9 @@ import '../core/engine_loop.dart';
 import '../core/entity.dart';
 import '../core/event_bus.dart' show LogSeverity;
 import '../core/game_script.dart';
+import '../core/gamepad.dart';
 import '../core/input.dart';
+import '../core/player_input.dart';
 import '../core/mouse_lock.dart';
 import '../core/save_data.dart';
 import '../core/scene.dart';
@@ -32,13 +34,17 @@ import '../subsystems/physics/rigid_body2d.dart';
 import '../subsystems/physics/tile_collision.dart';
 import '../subsystems/story/story_player.dart';
 import '../subsystems/three_d/components3d.dart';
+import '../subsystems/two_d/bullet_pool.dart';
 import '../subsystems/two_d/camera2d.dart';
 import '../subsystems/two_d/door.dart';
 import '../subsystems/two_d/flame_components.dart';
 import '../subsystems/two_d/line2d.dart';
+import '../subsystems/two_d/path_follower.dart';
+import '../subsystems/two_d/procgen.dart';
 import '../subsystems/two_d/sprite_animator.dart';
 import '../subsystems/two_d/top_down_controller.dart';
 import '../subsystems/ui/dialogue.dart';
+import '../subsystems/ui/minimap.dart';
 import '../subsystems/ui/ui_widgets.dart';
 import 'interpreter.dart';
 import 'script_library.dart';
@@ -255,7 +261,8 @@ const Map<String, List<String>> _componentAliases = {
   'sprite': ['flamesprite'],
   'hitbox': ['flamehitbox2d'],
   'body': ['flamehitbox2d'],
-  'tilemap': ['flametilemap2d'],
+  'tilemap': ['flametilemap', 'flametilemap2d'],
+  'light': ['light2d'],
   'mover': ['topdowncontroller2d'],
   'topdown': ['topdowncontroller2d'],
   'ai': ['monsterai'],
@@ -267,7 +274,42 @@ const Map<String, List<String>> _componentAliases = {
   'animator': ['spriteanimator'],
   'joint': ['joint2d'],
   'line': ['line2d'],
+  'bullets': ['bulletpool2d'],
+  'follower': ['pathfollower2d'],
+  'minimap': ['uiminimap'],
 };
+
+/// Optional settings shared by bullets.fire / ring / spread.
+({
+  int frame,
+  double? radius,
+  double accel,
+  double curve,
+  double maxSpeed,
+  double scale,
+  double? damage,
+  double life,
+  EmberEntity? target,
+  double turn,
+  double splash
+}) _bulletOptions(Map<String, Object?> o) {
+  double? d(String k) => (o[k] as num?)?.toDouble();
+  final target = o['target'];
+  if (target != null && target is! EmberEntity) throw ScriptArgumentError('target should be an entity, not ${Interpreter.describe(target)}');
+  return (
+    target: target as EmberEntity?,
+    turn: d('turn') ?? 540,
+    splash: d('splash') ?? 0,
+    frame: (o['frame'] as num?)?.round() ?? 0,
+    radius: d('radius'),
+    accel: d('accel') ?? 0,
+    curve: d('curve') ?? 0,
+    maxSpeed: d('maxSpeed') ?? 0,
+    scale: d('scale') ?? 1,
+    damage: d('damage'),
+    life: d('life') ?? 10,
+  );
+}
 
 // Keyboard names: 'A', 'Space', 'Left', 'Enter', 'Shift', 'Escape', ...
 final Map<String, LogicalKeyboardKey> _keyCache = {};
@@ -715,7 +757,8 @@ class _ComponentHost extends HostType {
     'invulnerable': ((c) => c is HealthComponent, (c, _) => (c as HealthComponent).isInvulnerable, null),
     'damage': ((c) => c is HealthComponent, (c, n) => _fn(n, (a) => (c as HealthComponent).damage(
           _num(a, 0, 'amount'),
-          source: a.length > 1 && a[1] != null ? _entity(a[1], 'source') : _self,
+          // A script hurting its own entity (spikes, falling) is not friendly fire
+          source: a.length > 1 && a[1] != null ? _entity(a[1], 'source') : (identical(_self, c.entity) ? null : _self),
           knockback: a.length > 2 && a[2] != null && a[2] is! Vector3 ? _vec(a[2], 'knockback') : null,
           push: a.length > 2 && a[2] is Vector3 ? a[2] as Vector3 : null,
         )), null),
@@ -792,9 +835,156 @@ class _ComponentHost extends HostType {
           if (v is! List) throw ScriptArgumentError('points should be a list of vec(x, y)');
           (c as Line2DComponent).points = [for (final p in v) _vec(p, 'point')];
         }),
-    'clear': ((c) => c is Line2DComponent, (c, n) => _fn(n, (_) {
+    'clear': ((c) => c is Line2DComponent || c is BulletPool2DComponent, (c, n) => _fn(n, (_) {
+          if (c is BulletPool2DComponent) return c.clear();
           (c as Line2DComponent).points = [];
           return null;
+        }), null),
+    // Bullet Pool 2D
+    'fire': ((c) => c is BulletPool2DComponent, (c, n) => _fnN(n, (a, o) {
+          final p = _point(a, 0, 'position');
+          final i = a.isNotEmpty && a[0] is num ? 2 : 1;
+          final b = _bulletOptions(o);
+          return (c as BulletPool2DComponent).fire(p.x, p.y, _num(a, i, 'angle'), _num(a, i + 1, 'speed'),
+              frame: b.frame,
+              radius: b.radius,
+              accel: b.accel,
+              curve: b.curve,
+              maxSpeed: b.maxSpeed,
+              scale: b.scale,
+              damage: b.damage,
+              life: b.life,
+              target: b.target,
+              turn: b.turn,
+              splash: b.splash);
+        }), null),
+    'ring': ((c) => c is BulletPool2DComponent, (c, n) => _fnN(n, (a, o) {
+          final p = _point(a, 0, 'position');
+          final i = a.isNotEmpty && a[0] is num ? 2 : 1;
+          final b = _bulletOptions(o);
+          (c as BulletPool2DComponent).ring(p.x, p.y, arg<num>(a, i, 'count').round(), _num(a, i + 1, 'speed'),
+              offset: (o['offset'] as num?)?.toDouble() ?? 0,
+              frame: b.frame, radius: b.radius, accel: b.accel, curve: b.curve, maxSpeed: b.maxSpeed, scale: b.scale, damage: b.damage);
+          return null;
+        }), null),
+    'spread': ((c) => c is BulletPool2DComponent, (c, n) => _fnN(n, (a, o) {
+          final p = _point(a, 0, 'position');
+          final i = a.isNotEmpty && a[0] is num ? 2 : 1;
+          final b = _bulletOptions(o);
+          (c as BulletPool2DComponent).spread(p.x, p.y, _num(a, i, 'angle'), arg<num>(a, i + 1, 'count').round(), _num(a, i + 2, 'arc'), _num(a, i + 3, 'speed'),
+              frame: b.frame, radius: b.radius, accel: b.accel, curve: b.curve, maxSpeed: b.maxSpeed, scale: b.scale, damage: b.damage);
+          return null;
+        }), null),
+    // Flame TileMap: reading, writing and generating levels
+    'getTile': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) => (c as FlameTileMapComponent).getTile(arg<num>(a, 0, 'column').round(), arg<num>(a, 1, 'row').round())), null),
+    'setTile': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) {
+          (c as FlameTileMapComponent).setTile(arg<num>(a, 0, 'column').round(), arg<num>(a, 1, 'row').round(), arg<num>(a, 2, 'tile').round());
+          return null;
+        }), null),
+    'fill': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) {
+          final m = c as FlameTileMapComponent;
+          m.setTiles(List.filled(m.columns * m.rows, arg<num>(a, 0, 'tile').round()));
+          return null;
+        }), null),
+    'cellAt': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) {
+          final p = _point(a, 0, 'point');
+          final cell = (c as FlameTileMapComponent).cellAt(p.x, p.y);
+          return cell == null ? null : [cell.$1, cell.$2];
+        }), null),
+    'findPath': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) {
+          int i(int k, String what) => arg<num>(a, k, what).round();
+          final path = (c as FlameTileMapComponent).findPath(i(0, 'from column'), i(1, 'from row'), i(2, 'to column'), i(3, 'to row'));
+          return path == null ? null : [for (final (pc, pr) in path) [pc, pr]];
+        }), null),
+    'block': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) {
+          final m = c as FlameTileMapComponent;
+          final k = arg<num>(a, 1, 'row').round() * m.columns + arg<num>(a, 0, 'column').round();
+          if (a.length < 3 || a[2] == true) {
+            m.blockedCells.add(k);
+          } else {
+            m.blockedCells.remove(k);
+          }
+          return null;
+        }), null),
+    'walkable': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) => (c as FlameTileMapComponent).isWalkable(arg<num>(a, 0, 'column').round(), arg<num>(a, 1, 'row').round())), null),
+    'cellCenter': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) {
+          final r = (c as FlameTileMapComponent).cellRect(arg<num>(a, 0, 'column').round(), arg<num>(a, 1, 'row').round());
+          return Vector2(r.center.dx, r.center.dy);
+        }), null),
+    'cellsWith': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) {
+          final m = c as FlameTileMapComponent;
+          final id = arg<num>(a, 0, 'tile').round();
+          final out = <Object?>[];
+          for (var r = 0; r < m.rows; r++) {
+            for (var col = 0; col < m.columns; col++) {
+              if (m.getTile(col, r) == id) out.add([col, r]);
+            }
+          }
+          return out;
+        }), null),
+    'dungeon': ((c) => c is FlameTileMapComponent, (c, n) => _fnN(n, (a, o) {
+          final m = c as FlameTileMapComponent;
+          int i(String k, int d) => (o[k] as num?)?.round() ?? d;
+          final rooms = TileGen.dungeon(m,
+              seed: arg<num>(a, 0, 'seed').round(),
+              rooms: i('rooms', 10),
+              minSize: i('minSize', 5),
+              maxSize: i('maxSize', 10),
+              wall: i('wall', 1),
+              floor: i('floor', 2),
+              corridor: i('corridor', 2));
+          return [
+            for (final r in rooms)
+              {
+                'col': r.col,
+                'row': r.row,
+                'width': r.width,
+                'height': r.height,
+                'center': () {
+                  final rect = m.cellRect(r.centerCol, r.centerRow);
+                  return Vector2(rect.center.dx, rect.center.dy);
+                }(),
+              },
+          ];
+        }), null),
+    'cave': ((c) => c is FlameTileMapComponent, (c, n) => _fnN(n, (a, o) {
+          TileGen.cave(c as FlameTileMapComponent,
+              seed: arg<num>(a, 0, 'seed').round(),
+              fill: (o['fill'] as num?)?.toDouble() ?? 0.45,
+              steps: (o['steps'] as num?)?.round() ?? 4,
+              wall: (o['wall'] as num?)?.round() ?? 1,
+              floor: (o['floor'] as num?)?.round() ?? 2);
+          return null;
+        }), null),
+    'autotile': ((c) => c is FlameTileMapComponent, (c, n) => _fn(n, (a) {
+          TileGen.autotile(c as FlameTileMapComponent, arg<num>(a, 0, 'wall tile').round(), arg<num>(a, 1, 'first piece').round());
+          return null;
+        }), null),
+    'vary': ((c) => c is FlameTileMapComponent, (c, n) => _fnN(n, (a, o) {
+          final ids = a.length > 1 && a[1] is List ? [for (final v in a[1] as List) (v as num).round()] : <int>[];
+          TileGen.vary(c as FlameTileMapComponent, arg<num>(a, 0, 'tile').round(), ids, optArg<num>(a, 2, 'chance', 0.2).toDouble(),
+              seed: (o['seed'] as num?)?.round() ?? 0);
+          return null;
+        }), null),
+    // Path Follower 2D
+    'slow': ((c) => c is PathFollower2DComponent, (c, n) => _fn(n, (a) {
+          (c as PathFollower2DComponent).slow(_num(a, 0, 'factor'), optArg<num>(a, 1, 'seconds', 1).toDouble());
+          return null;
+        }), null),
+    'progress': ((c) => c is PathFollower2DComponent, (c, _) => (c as PathFollower2DComponent).progress, null),
+    'distance': ((c) => c is PathFollower2DComponent, (c, _) => (c as PathFollower2DComponent).distance,
+        (c, v) => (c as PathFollower2DComponent).distance = (v as num).toDouble()),
+    'remaining': ((c) => c is PathFollower2DComponent, (c, _) => (c as PathFollower2DComponent).remaining, null),
+    'done': ((c) => c is PathFollower2DComponent, (c, _) => (c as PathFollower2DComponent).done, null),
+    'slowed': ((c) => c is PathFollower2DComponent, (c, _) => (c as PathFollower2DComponent).slowed, null),
+    'distanceTo': ((c) => c is Line2DComponent, (c, n) => _fn(n, (a) {
+          final p = _point(a, 0, 'point');
+          return (c as Line2DComponent).distanceTo(p.x, p.y);
+        }), null),
+    'clearAround': ((c) => c is BulletPool2DComponent, (c, n) => _fn(n, (a) {
+          final p = _point(a, 0, 'position');
+          final i = a.isNotEmpty && a[0] is num ? 2 : 1;
+          return (c as BulletPool2DComponent).clearAround(p.x, p.y, _num(a, i, 'radius'));
         }), null),
     // Camera 2D
     'shake': ((c) => c is Camera2DComponent, (c, n) => _fn(n, (a) {
@@ -819,6 +1009,28 @@ class _ComponentHost extends HostType {
     'grounded': ((c) => c is CharacterController2DComponent || c is CharacterController3DComponent,
         (c, _) => c is CharacterController3DComponent ? c.isGrounded : (c as CharacterController2DComponent).isGrounded, null),
     'canJump': ((c) => c is CharacterController2DComponent, (c, _) => (c as CharacterController2DComponent).canJump, null),
+    'dash': ((c) => c is CharacterController2DComponent, (c, n) => _fn(n, (_) => (c as CharacterController2DComponent).dash()), null),
+    'dashing': ((c) => c is CharacterController2DComponent, (c, _) => (c as CharacterController2DComponent).dashing, null),
+    'onWall': ((c) => c is CharacterController2DComponent, (c, _) => (c as CharacterController2DComponent).onWall, null),
+    'airJumpsLeft': ((c) => c is CharacterController2DComponent, (c, _) => (c as CharacterController2DComponent).airJumpsLeft, null),
+    // UI Minimap
+    'explored': ((c) => c is UIMinimapComponent, (c, _) => (c as UIMinimapComponent).explored, (c, v) => (c as UIMinimapComponent).explored = '${v ?? ''}'),
+    'exploredFraction': ((c) => c is UIMinimapComponent, (c, _) => (c as UIMinimapComponent).exploredFraction, null),
+    'revealAll': ((c) => c is UIMinimapComponent, (c, n) => _fn(n, (_) {
+          (c as UIMinimapComponent).revealAll();
+          return null;
+        }), null),
+    // Camera rooms
+    'room': ((c) => c is Camera2DComponent, (c, _) => (c as Camera2DComponent).room?.entity, null),
+    'snapToTarget': ((c) => c is Camera2DComponent, (c, n) => _fn(n, (_) {
+          (c as Camera2DComponent).snapToTarget();
+          return null;
+        }), null),
+    'keepInView': ((c) => c is Camera2DComponent, (c, n) => _fn(n, (a) {
+          final t = arg<EmberEntity>(a, 0, 'entity').getComponent<Transform2DComponent>();
+          if (t != null) t.position = (c as Camera2DComponent).keepInReach(t.position, margin: optArg<num>(a, 1, 'margin', 24).toDouble());
+          return null;
+        }), null),
     'bounce': ((c) => c is CharacterController2DComponent, (c, n) => _fn(n, (a) {
           final cc = c as CharacterController2DComponent;
           cc.bounce(optArg<num>(a, 0, 'strength', cc.jumpVelocity).toDouble());
@@ -839,7 +1051,11 @@ class _ComponentHost extends HostType {
     'ended': ((c) => c is StoryPlayerComponent, (c, _) => (c as StoryPlayerComponent).ended, null),
     'speaker': ((c) => c is StoryPlayerComponent, (c, _) => (c as StoryPlayerComponent).speaker, null),
     // 3D meshes
-    'flash': ((c) => c is MeshRenderer3DComponent, (c, n) => _fn(n, (a) {
+    'flash': ((c) => c is MeshRenderer3DComponent || c is Camera2DComponent, (c, n) => _fn(n, (a) {
+          if (c is Camera2DComponent) {
+            c.flash(a.isNotEmpty && a[0] != null ? _colorFromScript(a[0]) : const Color(0xB0FFFFFF), optArg<num>(a, 1, 'seconds', 0.25).toDouble());
+            return null;
+          }
           (c as MeshRenderer3DComponent).flash(
               a.isNotEmpty && a[0] != null ? _colorFromScript(a[0]) : const Color(0xFFFFFFFF), optArg<num>(a, 1, 'seconds', 0.12).toDouble());
           return null;
@@ -867,7 +1083,12 @@ class _ComponentHost extends HostType {
           return null;
         }), null),
     // UI images (hearts)
-    'count': ((c) => c is UIImageComponent, (c, _) => (c as UIImageComponent).count, (c, v) => (c as UIImageComponent).count = (v as num).round()),
+    'count': ((c) => c is UIImageComponent || c is BulletPool2DComponent,
+        (c, _) => c is BulletPool2DComponent ? c.count : (c as UIImageComponent).count,
+        (c, v) {
+          if (c is BulletPool2DComponent) throw ScriptArgumentError('count of a Bullet Pool can only be read');
+          (c as UIImageComponent).count = (v as num).round();
+        }),
     'filled': ((c) => c is UIImageComponent, (c, _) => (c as UIImageComponent).filled, (c, v) => (c as UIImageComponent).filled = (v as num).round()),
     // Monster AI
     'state': ((c) => c is MonsterAIComponent || c is EnemyAI3DComponent,
@@ -990,6 +1211,12 @@ class _InputHost extends HostType {
         'move' => Vector2(Input.getAxis('horizontal'), -Input.getAxis('vertical')),
         'mouse' => InputManager.instance.mouseWorldPosition.clone(),
         'click' => Input.isMouseButtonJustPressed(0),
+        'rightClick' => Input.isMouseButtonJustPressed(2),
+        'player' => _fn(name, (a) => PlayerControls.of(arg<num>(a, 0, 'player number').round() - 1)),
+        'pad' => _fn(name, (a) => _Pad(arg<num>(a, 0, 'pad number').round() - 1)),
+        'pads' => GamepadInput.instance.pads.length,
+        'rightDown' => Input.isMouseButtonPressed(2),
+        'dragStart' => InputManager.instance.dragStart.clone(),
         'mouseDown' => Input.isMouseButtonPressed(0),
         'mouseReleased' => Input.isMouseButtonJustReleased(0),
         'mouseDelta' => Input.mouseDelta.clone(),
@@ -1103,6 +1330,150 @@ class GameApi {
   const GameApi();
 }
 
+GamepadButton _padButton(Object? name) {
+  final want = '$name'.toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
+  const aliases = {'lb': 'leftbumper', 'rb': 'rightbumper', 'lt': 'lefttrigger', 'rt': 'righttrigger', 'up': 'dpadup', 'down': 'dpaddown',
+    'left': 'dpadleft', 'right': 'dpadright', 'select': 'back', 'l3': 'leftstick', 'r3': 'rightstick'};
+  final n = aliases[want] ?? want;
+  for (final b in GamepadButton.values) {
+    if (b.name.toLowerCase() == n) return b;
+  }
+  throw ScriptArgumentError('unknown gamepad button "$name" (try "a", "b", "x", "y", "lb", "rb", "start", "up")');
+}
+
+class _Pad {
+  final int index;
+  const _Pad(this.index);
+}
+
+class _PadHost extends HostType {
+  @override
+  String get typeName => 'Pad';
+  @override
+  bool matches(Object v) => v is _Pad;
+  @override
+  List<String> memberNames(Object obj) => const ['connected', 'button', 'pressed', 'released', 'stick', 'rightStick', 'trigger'];
+  @override
+  Object? getMember(Object obj, String name) {
+    final i = (obj as _Pad).index;
+    final g = GamepadInput.instance;
+    return switch (name) {
+      'connected' => g.connected(i),
+      'button' => _fn(name, (a) => g.isDown(i, _padButton(a.isEmpty ? null : a[0]))),
+      'pressed' => _fn(name, (a) => g.justPressed(i, _padButton(a.isEmpty ? null : a[0]))),
+      'released' => _fn(name, (a) => g.justReleased(i, _padButton(a.isEmpty ? null : a[0]))),
+      'stick' => g.stick(i),
+      'rightStick' => g.stick(i, right: true),
+      'trigger' => _fn(name, (a) => g.axis(i, '${a.isEmpty ? 'right' : a[0]}' == 'left' ? GamepadAxis.leftTrigger : GamepadAxis.rightTrigger)),
+      _ => missing,
+    };
+  }
+}
+
+/// Input.player(n): a player's half of the keyboard plus their gamepad.
+class _PlayerHost extends HostType {
+  @override
+  String get typeName => 'Player';
+  @override
+  bool matches(Object v) => v is PlayerControls;
+  @override
+  List<String> memberNames(Object obj) => const ['move', 'key', 'pressed', 'released', 'buffered', 'motion', 'usingPad', 'number'];
+  @override
+  Object? getMember(Object obj, String name) {
+    final p = obj as PlayerControls;
+    String action(List<Object?> a) {
+      final s = arg<String>(a, 0, 'action');
+      if (!PlayerControls.actions.contains(s)) throw ScriptArgumentError('unknown action "$s" (${PlayerControls.actions.join(', ')})');
+      return s;
+    }
+
+    return switch (name) {
+      'move' => p.move,
+      'number' => p.index + 1,
+      'usingPad' => p.usingPad,
+      'key' => _fn(name, (a) => p.down(action(a))),
+      'pressed' => _fn(name, (a) => p.pressed(action(a))),
+      'released' => _fn(name, (a) => p.released(action(a))),
+      'buffered' => _fn(name, (a) => p.buffered(action(a), frames: optArg<num>(a, 1, 'frames', 6).round())),
+      'motion' => _fnN(name, (a, n) => p.motion(arg<String>(a, 0, 'directions'), action([a.length > 1 ? a[1] : null]),
+          facingRight: n['facingRight'] as bool? ?? true, window: (n['window'] as num?)?.round() ?? 20)),
+      _ => missing,
+    };
+  }
+}
+
+/// `Music.time`, `Music.pause()`: the music clock for rhythm games.
+class MusicApi {
+  const MusicApi();
+}
+
+class _MusicHost extends HostType {
+  @override
+  String get typeName => 'Music';
+  @override
+  bool matches(Object v) => v is MusicApi;
+  @override
+  List<String> memberNames(Object obj) => const ['time', 'playing', 'paused', 'ended', 'offset', 'pause', 'resume', 'stop'];
+  @override
+  Object? getMember(Object obj, String name) {
+    final a = AudioSystem.instance;
+    return switch (name) {
+      'time' => a.musicTime,
+      'playing' => a.musicPlaying,
+      'paused' => a.musicPaused,
+      'ended' => a.musicEnded,
+      'offset' => a.musicOffset,
+      'pause' => _fn(name, (_) {
+          a.pauseMusic();
+          return null;
+        }),
+      'resume' => _fn(name, (_) {
+          a.resumeMusic();
+          return null;
+        }),
+      'stop' => _fn(name, (_) {
+          a.stopMusic();
+          return null;
+        }),
+      _ => missing,
+    };
+  }
+
+  @override
+  bool setMember(Object obj, String name, Object? value) {
+    if (name != 'offset') return false;
+    AudioSystem.instance.musicOffset = value is num ? value.toDouble() : throw ScriptArgumentError('offset should be a number of seconds');
+    return true;
+  }
+}
+
+/// Random(seed): numbers that repeat for the same seed.
+class _RandomHost extends HostType {
+  @override
+  String get typeName => 'Random';
+  @override
+  bool matches(Object v) => v is SeededRandom;
+  @override
+  List<String> memberNames(Object obj) => const ['seed', 'next', 'range', 'integer', 'chance', 'pick', 'shuffle'];
+  @override
+  Object? getMember(Object obj, String name) {
+    final r = obj as SeededRandom;
+    return switch (name) {
+      'seed' => r.seed,
+      'next' => _fn(name, (_) => r.next()),
+      'range' => _fn(name, (a) => r.range(_num(a, 0, 'min'), _num(a, 1, 'max'))),
+      'integer' => _fn(name, (a) => r.integer(arg<num>(a, 0, 'max').round())),
+      'chance' => _fn(name, (a) => r.chance(_num(a, 0, 'probability'))),
+      'pick' => _fn(name, (a) => r.pick<Object?>(arg<List>(a, 0, 'list'))),
+      'shuffle' => _fn(name, (a) {
+          r.shuffle(arg<List>(a, 0, 'list'));
+          return null;
+        }),
+      _ => missing,
+    };
+  }
+}
+
 class _GameHost extends HostType {
   @override
   String get typeName => 'Game';
@@ -1120,6 +1491,10 @@ class _GameHost extends HostType {
       'paused' => engine.timeScale == 0,
       'data' => _lib.gameData,
       'dialogueOpen' => DialogueSystem.instance.isOpen,
+      'today' => () {
+          final d = DateTime.now();
+          return d.year * 10000 + d.month * 100 + d.day;
+        }(),
       _ => missing,
     };
   }
@@ -1192,7 +1567,7 @@ void registerScriptApi() {
   if (_registered) return;
   _registered = true;
   Interpreter.hostTypes.addAll([
-    _Vec2Host(), _Vec3Host(), _RayHit3DHost(), _EntityHost(), _ScriptVarsHost(), _TileHitHost(), _RayHitHost(), _InputHost(), _GameHost(), _PhysicsHost(), _ComponentHost(),
+    _Vec2Host(), _Vec3Host(), _RandomHost(), _MusicHost(), _PadHost(), _PlayerHost(), _RayHit3DHost(), _EntityHost(), _ScriptVarsHost(), _TileHitHost(), _RayHitHost(), _InputHost(), _GameHost(), _PhysicsHost(), _ComponentHost(),
   ]);
 
   final g = Interpreter.globals;
@@ -1211,6 +1586,8 @@ void registerScriptApi() {
   g['vec'] = _fn('vec', (a) => Vector2(optArg<num>(a, 0, 'x', 0).toDouble(), optArg<num>(a, 1, 'y', 0).toDouble()));
   g['Input'] = const InputApi();
   g['Game'] = const GameApi();
+  g['Music'] = const MusicApi();
+  g['readText'] = _fn('readText', (a) => _lib.text(arg<String>(a, 0, 'file name')));
   g['Physics'] = const PhysicsApi();
 
   // --- Math
@@ -1240,6 +1617,20 @@ void registerScriptApi() {
   g['sin'] = _fn('sin', (a) => math.sin(_num(a, 0, 'radians')));
   g['cos'] = _fn('cos', (a) => math.cos(_num(a, 0, 'radians')));
   g['atan2'] = _fn('atan2', (a) => math.atan2(_num(a, 0, 'y'), _num(a, 1, 'x')));
+  g['Random'] = _fn('Random', (a) => SeededRandom(optArg<num>(a, 0, 'seed', DateTime.now().microsecondsSinceEpoch & 0x7FFFFFFF).round()));
+  g['noise'] = _fn('noise', (a) => Noise2D.at(_num(a, 0, 'x'), _num(a, 1, 'y'), optArg<num>(a, 2, 'seed', 0).round()));
+  g['smoothNoise'] = _fn('smoothNoise', (a) => Noise2D.fractal(_num(a, 0, 'x'), _num(a, 1, 'y'), seed: optArg<num>(a, 2, 'seed', 0).round()));
+  g['snap'] = _fn('snap', (a) {
+    final p = _vec(a.isEmpty ? null : a[0], 'point');
+    final cell = optArg<num>(a, 1, 'cell size', 32).toDouble();
+    if (cell <= 0) throw ScriptArgumentError('cell size should be more than 0');
+    return Vector2((p.x / cell).floor() * cell + cell / 2, (p.y / cell).floor() * cell + cell / 2);
+  });
+  g['angleTo'] = _fn('angleTo', (a) {
+    final from = _vec(a.isEmpty ? null : a[0], 'from');
+    final to = _vec(a.length > 1 ? a[1] : null, 'to');
+    return math.atan2(to.y - from.y, to.x - from.x) * 180 / math.pi;
+  });
   g['floor'] = _fn('floor', (a) => arg<num>(a, 0, 'x').floor());
   g['round'] = _fn('round', (a) => arg<num>(a, 0, 'x').round());
   g['sign'] = _fn('sign', (a) => arg<num>(a, 0, 'x').sign);
@@ -1247,7 +1638,17 @@ void registerScriptApi() {
   g['radians'] = _fn('radians', (a) => _num(a, 0, 'degrees') * math.pi / 180);
 
   // --- Scene
-  g['find'] = _fn('find', (a) => _scene.findByName(arg<String>(a, 0, 'name')));
+  g['find'] = _fn('find', (a) {
+    // A live entity first: a hidden template of the same name comes last
+    final name = arg<String>(a, 0, 'name');
+    EmberEntity? hidden;
+    for (final e in _scene.allEntities) {
+      if (e.name != name) continue;
+      if (e.enabled) return e;
+      hidden ??= e;
+    }
+    return hidden;
+  });
   g['findAll'] = _fn('findAll', (a) {
     final tag = arg<String>(a, 0, 'tag');
     return [for (final e in _scene.allEntities) if (e.enabled && e.tags.contains(tag)) e];
@@ -1257,6 +1658,29 @@ void registerScriptApi() {
     return hits.isEmpty ? null : hits.first;
   });
   g['pickAll'] = _fn('pickAll', _pickAll);
+  g['findInBox'] = _fn('findInBox', (a) {
+    final tag = arg<String>(a, 0, 'tag');
+    final p = _vec(a.length > 1 ? a[1] : null, 'corner');
+    final q = _vec(a.length > 2 ? a[2] : null, 'corner');
+    final box = Rect.fromPoints(Offset(p.x, p.y), Offset(q.x, q.y));
+    return [
+      for (final e in _scene.allEntities)
+        if (e.enabled && e.tags.contains(tag) && box.contains(Combat.bodyOf(e).center)) e,
+    ];
+  });
+  g['findInRange'] = _fn('findInRange', (a) {
+    final tag = arg<String>(a, 0, 'tag');
+    final from = _vec(a.length > 1 ? a[1] : null, 'point');
+    final radius = _num(a, 2, 'radius');
+    final found = <(EmberEntity, double)>[];
+    for (final e in _scene.allEntities) {
+      if (!e.enabled || !e.tags.contains(tag)) continue;
+      final d = _center(e).distanceTo(from);
+      if (d <= radius) found.add((e, d));
+    }
+    found.sort((x, y) => x.$2.compareTo(y.$2));
+    return [for (final (e, _) in found) e];
+  });
   g['findNearest'] = _fn('findNearest', (a) {
     final tag = arg<String>(a, 0, 'tag');
     final from = a.length > 1 ? _point(a, 1, 'from') : (_self == null ? Vector2.zero() : _center(_self!));
@@ -1383,8 +1807,9 @@ void registerScriptApi() {
     }
     return null;
   });
-  g['playMusic'] = _fn('playMusic', (a) {
-    AudioSystem.instance.playMusic(arg<String>(a, 0, 'music file'), volume: optArg<num>(a, 1, 'volume', 0.6).toDouble());
+  g['playMusic'] = _fnN('playMusic', (a, n) {
+    AudioSystem.instance.playMusic(arg<String>(a, 0, 'music file'),
+        volume: (n['volume'] as num?)?.toDouble() ?? optArg<num>(a, 1, 'volume', 0.6).toDouble(), loop: n['loop'] as bool? ?? true);
     return null;
   });
   g['stopMusic'] = _fn('stopMusic', (_) {
@@ -1459,6 +1884,11 @@ void _registerDocs() {
     ('onUIAction(action)', 'A UI Button with this action was clicked (every script receives it).'),
     ('onHeadBump(tile)', 'Platformer hero hit a tile with its head (tile.set(0) breaks it).'),
     ('onTileTouch(tile)', 'Touching a hazard tile (spikes, lava).'),
+    ('onBulletHit(position, victim, frame)', "A bullet from this entity's Bullet Pool hit something (play effects here)."),
+    ('onGraze()', 'An enemy bullet just missed this entity (its pool has a Graze Radius).'),
+    ('onRoomEnter(room)', 'The camera follows this entity into another Camera Room 2D.'),
+    ('onAirJump() / onWallJump() / onDash()', 'Platformer: an ability was just used (effects and sounds).'),
+    ('onPathEnd()', "This entity's Path Follower reached the end of its path."),
   ], callbacks: true);
 
   ScriptApi._add('', 'Basics', [
@@ -1469,6 +1899,8 @@ void _registerDocs() {
     ('vec3(x, y, z)', 'A 3D vector / point, e.g. vec3(0, 1, -5). Add, subtract, multiply by numbers.'),
     ('Input', 'Keyboard, mouse and actions — see Input.'),
     ('Game', 'Time, time scale and the current level — see Game.'),
+    ('Music', 'The music clock for rhythm games: Music.time (seconds heard), playing, ended, offset (calibration), pause(), resume(), stop().'),
+    ('readText(file)', 'The text of a file in the Script workspace (charts, level lists, dialogue).'),
     ('Physics', 'Gravity, raycasts and explosions (2D), raycasts and line of sight (3D) — see Physics.'),
   ]);
   ScriptApi._add('', 'Math', [
@@ -1486,6 +1918,10 @@ void _registerDocs() {
     ('sin(radians)', 'Sine.'),
     ('cos(radians)', 'Cosine.'),
     ('atan2(y, x)', 'Angle of a direction, in radians.'),
+    ('angleTo(from, to)', 'Angle in degrees from one point (or entity) to another: aim bullets with it.'),
+    ('Random(seed)', 'Random numbers that repeat for the same seed: r.next(), r.range(a, b), r.integer(n), r.chance(p), r.pick(list), r.shuffle(list).'),
+    ('noise(x, y, seed)', 'Smooth noise from 0 to 1 (terrain, caves, wobble); smoothNoise adds finer detail.'),
+    ('snap(point, cell)', 'The centre of the grid cell a point is in, e.g. snap(Input.mouse, 40): build grids.'),
     ('floor(x)', 'Round down.'),
     ('round(x)', 'Round to the nearest whole number.'),
     ('sign(x)', '-1, 0 or 1.'),
@@ -1494,9 +1930,11 @@ void _registerDocs() {
     ('pi', '3.14159…'),
   ]);
   ScriptApi._add('', 'Scene', [
-    ('find(name)', 'The entity with this name, or null.'),
+    ('find(name)', 'The entity with this name, or null (a visible one first, so spawned copies win over their hidden template).'),
     ('findAll(tag)', 'All enabled entities with this tag.'),
     ('findNearest(tag)', 'The closest entity with this tag (optionally findNearest(tag, from)).'),
+    ('findInBox(tag, corner, corner)', 'Entities with this tag whose centre is inside the box (drag-selecting units).'),
+    ('findInRange(tag, point, radius)', 'Entities with this tag within radius of a point, nearest first (tower targets, area spells).'),
     ('pick(point, tag)', '2D: the top-most entity under a point (e.g. pick(Input.mouse, "card")), or null.'),
     ('pickAll(point, tag)', '2D: every entity under a point, top-most first.'),
     ('solidAt(point)', 'true if a solid tile covers this point (walls, water, trees). solidAt(x, y, size) checks a square.'),
@@ -1605,8 +2043,23 @@ void _registerDocs() {
     ('snap()', 'Joint: break it now.'),
     ('points', 'Line 2D: list of world points to draw through, e.g. [vec(0, 0), vec(100, 40)].'),
     ('shake(amount, seconds)', 'Camera 2D: screen shake (e.g. find("Camera").camera.shake(10, 0.4)).'),
+    ('flash(color, seconds)', 'Camera 2D: fill the screen with a colour that fades out (hits, bombs).'),
+    ('fire(position, angle, speed)', 'Bullet Pool: one bullet. Angle in degrees (0 right, 90 down). Named: frame, scale, curve (degrees/s), accel, maxSpeed, damage, radius, life, target (homes in), turn (degrees/s), splash (radius).'),
+    ('ring(position, count, speed)', 'Bullet Pool: bullets all around (named: offset in degrees, plus those of fire).'),
+    ('spread(position, angle, count, arc, speed)', 'Bullet Pool: a fan of bullets over arc degrees around angle.'),
+    ('dungeon(seed)', 'TileMap: rooms and corridors (named: rooms, minSize, maxSize, wall, floor, corridor). Returns the rooms, each with col, row, width, height, center.'),
+    ('cave(seed)', 'TileMap: natural caves (named: fill, steps, wall, floor).'),
+    ('autotile(wall, first)', 'TileMap: turns wall tiles into one of 16 pieces (first + 1 up, 2 right, 4 down, 8 left when the neighbour is wall too).'),
+    ('findPath(c0, r0, c1, r1)', 'TileMap: the shortest walk between two cells as a list of [col, row] (null if blocked). block(col, row, true) marks cells (buildings); walkable(col, row). Works on square, isometric and hex maps.'),
+    ('getTile(col, row)', 'TileMap: the tile id there (setTile(col, row, id), fill(id), vary(id, [ids], chance), cellAt(point), cellCenter(col, row), cellsWith(id)).'),
+    ('slow(factor, seconds)', 'Path Follower: move at factor of its speed for a while (frost towers). Also progress (0..1), distance, remaining, done.'),
+    ('distanceTo(point)', 'Line 2D: how far a point is from the line (keep towers off the path).'),
+    ('clearAround(position, radius)', 'Bullet Pool: remove bullets near a point (a bomb). Returns how many; clear() removes all.'),
     ('talk()', 'Dialogue: open this character\'s lines.'),
     ('shoot(direction)', 'Monster AI: fire its projectile along a Vec2 (e.g. rings of fireballs).'),
+    ('dash()', 'Platformer: dash the way it faces (needs Dash Speed). Also dashing, onWall (-1, 0, 1), airJumpsLeft; Air Jumps and Wall Jump are Inspector fields.'),
+    ('explored', 'Minimap: what was explored, as text to save; set it to load. exploredFraction (0..1), revealAll().'),
+    ('room', 'Camera 2D: the Camera Room entity the followed entity is in (or null). snapToTarget() jumps straight to the followed entity.'),
     ('groundAt(x, y)', 'Platformer: is there floor at this point? (turn around at ledges)'),
     ('hazardAt(x, y)', 'Platformer: is there a hazard tile at this point?'),
   ]);
@@ -1635,6 +2088,10 @@ void _registerDocs() {
     ('click', 'true on the frame the mouse (or touch) goes down.'),
     ('mouseDown', 'true while the mouse button is held.'),
     ('mouseReleased', 'true on the frame the mouse (or touch) is let go — end of a drag.'),
+    ('rightClick', 'true on the frame the right mouse button goes down (rightDown while held).'),
+    ('player(n)', 'Player n (1-4): their half of the keyboard and their gamepad. .move (Vec2), .key("attack"), .pressed / .released, .buffered("attack"), .motion("236", "attack", facingRight: true) for fighting moves. Actions: left right up down jump attack special block start.'),
+    ('pad(n)', 'Gamepad n (1-4): .connected, .button("a"), .pressed("start"), .released, .stick, .rightStick, .trigger("left"). Pad 1 also works with Input.move and Input.action.'),
+    ('dragStart', 'Where the left button went down, in the world (box selection: findInBox(tag, Input.dragStart, Input.mouse)).'),
   ]);
   ScriptApi._add('Physics', 'Physics', [
     ('gravity', 'World gravity as a Vec2 in px/s² (can be set, e.g. vec(0, 300) for the moon).'),
@@ -1682,6 +2139,7 @@ void _registerDocs() {
     ('levels', 'Names of all scenes.'),
     ('data', 'A map shared by all scripts that survives level changes and restarts: Game.data["lives"] = 3.'),
     ('dialogueOpen', 'true while a dialogue box is showing.'),
+    ('today', "Today's date as a number, e.g. 20261018: a seed for daily challenges."),
   ]);
   ScriptApi._add('Tile', 'Tile', [
     ('column', 'Tile column.'),

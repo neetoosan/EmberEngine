@@ -50,6 +50,9 @@ class ParticleEmitter2DComponent extends EmberComponent {
   double speed;
   double gravity;
 
+  /// Soft round particles that add up like light (sparks, magic, neon).
+  bool glow;
+
   final List<Particle2D> _particles = [];
   double _spawnAccumulator = 0.0;
   final math.Random _rng = math.Random();
@@ -66,6 +69,7 @@ class ParticleEmitter2DComponent extends EmberComponent {
     this.endSize = 1.5,
     this.speed = 80.0,
     this.gravity = -40.0, // Upward buoyant force by default
+    this.glow = false,
   }) : spawnRate = emissionRate ?? spawnRate ?? 25.0;
 
   double get emissionRate => spawnRate;
@@ -125,14 +129,13 @@ class ParticleEmitter2DComponent extends EmberComponent {
 
   @override
   void onUpdate(double dt) {
-    // 1. Update existing particles
-    for (int i = _particles.length - 1; i >= 0; i--) {
+    // 1. Update existing particles (dead ones are dropped in one pass)
+    var write = 0;
+    for (int i = 0; i < _particles.length; i++) {
       final p = _particles[i];
       p.life -= dt;
-      if (p.life <= 0) {
-        _particles.removeAt(i);
-        continue;
-      }
+      if (p.life <= 0) continue;
+      _particles[write++] = p;
 
       // Physics integration
       p.velocity.y += gravity * dt;
@@ -143,6 +146,7 @@ class ParticleEmitter2DComponent extends EmberComponent {
       p.color = Color.lerp(startColor, endColor, t) ?? startColor;
       p.size = startSize + (endSize - startSize) * t;
     }
+    _particles.length = write;
 
     // 2. Spawn new particles
     if (enabled && _particles.length < maxParticles) {
@@ -227,6 +231,17 @@ class ParticleEmitter2DComponent extends EmberComponent {
           max: 100.0,
           step: 5.0,
         ),
+        InspectableProperty<bool>(
+          name: 'glow',
+          label: 'Glow',
+          type: InspectableType.boolean,
+          getter: () => glow,
+          setter: (val) {
+            glow = val;
+            notifyListeners();
+          },
+          tooltip: 'Soft particles that add up like light',
+        ),
         InspectableProperty<Color>(
           name: 'startColor',
           label: 'Start Color',
@@ -262,6 +277,7 @@ class ParticleEmitter2DComponent extends EmberComponent {
       'endSize': endSize,
       'speed': speed,
       'gravity': gravity,
+      if (glow) 'glow': true,
     };
   }
 
@@ -281,6 +297,7 @@ class ParticleEmitter2DComponent extends EmberComponent {
     endSize = (json['endSize'] as num?)?.toDouble() ?? 1.5;
     speed = (json['speed'] as num?)?.toDouble() ?? 80.0;
     gravity = (json['gravity'] as num?)?.toDouble() ?? -40.0;
+    glow = json['glow'] as bool? ?? false;
     notifyListeners();
   }
 
@@ -297,6 +314,7 @@ class ParticleEmitter2DComponent extends EmberComponent {
       endSize: endSize,
       speed: speed,
       gravity: gravity,
+      glow: glow,
     );
   }
 }

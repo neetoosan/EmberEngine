@@ -44,6 +44,7 @@ dependencies:
   ffi: ^2.2.0
   flutter_secure_storage: ^11.2.0
   web: ^1.1.1
+  gamepads: ^0.1.12
 
 dev_dependencies:
   flutter_test:
@@ -77,6 +78,14 @@ flutter:
     - assets/templates/gems/
     - assets/templates/solitaire/
     - assets/templates/story/
+    - assets/templates/nova/
+    - assets/templates/bastion/
+    - assets/templates/depths/
+    - assets/templates/spire/
+    - assets/templates/isles/
+    - assets/templates/pulse/
+    - assets/templates/clash/
+    - assets/templates/kindred/
     # Web / Android exports put the game package here (empty in the editor)
     - assets/game/
     - assets/branding/

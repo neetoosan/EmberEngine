@@ -14,6 +14,8 @@ import '../two_d/flame_components.dart';
 /// - Jump Buffering (100ms window before landing)
 /// - Variable Jump Height (releasing jump early truncates ascent)
 /// - Snappy horizontal acceleration and friction
+/// - Optional abilities (metroidvanias): [airJumps] (double jump), [wallJump]
+///   (slide down walls and jump off them) and a dash ([dashSpeed], `dash()`).
 class CharacterController2DComponent extends EmberComponent {
   double moveSpeed;
   double jumpVelocity;
@@ -21,6 +23,25 @@ class CharacterController2DComponent extends EmberComponent {
   double coyoteTimeDuration;
   double jumpBufferDuration;
   double groundY;
+
+  /// Extra jumps in mid-air (1 = double jump).
+  int airJumps;
+
+  /// Slide down walls and jump off them.
+  bool wallJump;
+  double wallSlideSpeed;
+
+  /// Speed of `dash()` (0 = no dash) and how long it lasts.
+  double dashSpeed;
+  double dashTime;
+
+  int _airJumpsLeft = 0;
+  int _wallDir = 0;
+  double _wallLock = 0;
+  double _dashTimer = 0;
+  double _dashCooldown = 0;
+  int _dashDir = 1;
+  bool _canDash = true;
 
   final vm.Vector2 _velocity = vm.Vector2.zero();
   bool _isGrounded = false;
@@ -34,7 +55,29 @@ class CharacterController2DComponent extends EmberComponent {
     this.coyoteTimeDuration = 0.12,
     this.jumpBufferDuration = 0.10,
     this.groundY = 500.0,
+    this.airJumps = 0,
+    this.wallJump = false,
+    this.wallSlideSpeed = 110,
+    this.dashSpeed = 0,
+    this.dashTime = 0.18,
   });
+
+  /// -1 touching a wall on the left, 1 on the right, 0 none (while in the air).
+  int get onWall => _wallDir;
+  int get airJumpsLeft => _airJumpsLeft;
+  bool get dashing => _dashTimer > 0;
+
+  /// Dashes the way it faces. One dash in the air until landing; returns false if it can't.
+  bool dash() {
+    if (dashSpeed <= 0 || _dashTimer > 0 || _dashCooldown > 0 || !_canDash) return false;
+    _dashTimer = dashTime;
+    _dashCooldown = dashTime + 0.25;
+    _dashDir = _facing;
+    if (!_isGrounded) _canDash = false;
+    _velocity.y = 0;
+    entity?.notifyScripts((s) => s.onMessage('onDash', const []));
+    return true;
+  }
 
   bool get isGrounded => _isGrounded;
   bool get canJump => _coyoteTimer > 0.0 || _isGrounded;
@@ -82,9 +125,19 @@ class CharacterController2DComponent extends EmberComponent {
     final t2d = entity?.getComponent<Transform2DComponent>();
     if (t2d == null) return;
 
-    // 1. Horizontal acceleration
-    final targetVx = horizontalInput * moveSpeed;
-    _velocity.x += (targetVx - _velocity.x) * math.min(1.0, dt * 16.0);
+    // 1. Horizontal acceleration (briefly ignored after a wall jump; a dash overrides it)
+    if (_dashCooldown > 0) _dashCooldown -= dt;
+    final dashingNow = _dashTimer > 0;
+    if (dashingNow) {
+      _dashTimer -= dt;
+      _velocity.x = _dashDir * dashSpeed;
+      _velocity.y = 0;
+    } else if (_wallLock > 0) {
+      _wallLock -= dt;
+    } else {
+      final targetVx = horizontalInput * moveSpeed;
+      _velocity.x += (targetVx - _velocity.x) * math.min(1.0, dt * 16.0);
+    }
 
     // 2. Timers
     if (_isGrounded) {
@@ -105,6 +158,21 @@ class CharacterController2DComponent extends EmberComponent {
       _coyoteTimer = 0.0;
       _jumpBufferTimer = 0.0;
       _isGrounded = false;
+    } else if (isJumpJustPressed && !dashingNow) {
+      if (wallJump && _wallDir != 0) {
+        // Off the wall, away from it
+        _velocity.x = -_wallDir * moveSpeed * 1.15;
+        _velocity.y = -jumpVelocity * 0.95;
+        _facing = -_wallDir;
+        _wallLock = 0.16;
+        _jumpBufferTimer = 0.0;
+        entity?.notifyScripts((s) => s.onMessage('onWallJump', const []));
+      } else if (_airJumpsLeft > 0) {
+        _velocity.y = -jumpVelocity * 0.92;
+        _airJumpsLeft--;
+        _jumpBufferTimer = 0.0;
+        entity?.notifyScripts((s) => s.onMessage('onAirJump', const []));
+      }
     }
 
     // 4. Variable Jump Height: If player releases jump while moving up, cut velocity
@@ -112,11 +180,17 @@ class CharacterController2DComponent extends EmberComponent {
       _velocity.y *= 0.5;
     }
 
-    // 5. Apply Gravity (always; ground contact is re-detected every frame)
-    _velocity.y += gravity * dt;
+    // 5. Apply Gravity (not mid-dash; ground contact is re-detected every frame)
+    if (!dashingNow) _velocity.y += gravity * dt;
+    // Sliding down a wall while pushing against it
+    if (wallJump && _wallDir != 0 && !_isGrounded && _velocity.y > wallSlideSpeed && horizontalInput * _wallDir > 0.1) {
+      _velocity.y = wallSlideSpeed;
+    }
 
-    if (horizontalInput > 0.1) _facing = 1;
-    if (horizontalInput < -0.1) _facing = -1;
+    if (_wallLock <= 0 && !dashingNow) {
+      if (horizontalInput > 0.1) _facing = 1;
+      if (horizontalInput < -0.1) _facing = -1;
+    }
 
     // 6. Integrate Position one axis at a time against the tiles near the character
     final w = t2d.size.x * t2d.scale.x;
@@ -174,6 +248,19 @@ class CharacterController2DComponent extends EmberComponent {
     }
 
     t2d.position = vm.Vector2(x, y);
+
+    // Abilities recharge on the ground; walls are felt just beside the body
+    if (_isGrounded) {
+      _airJumpsLeft = airJumps;
+      _canDash = true;
+    }
+    _wallDir = 0;
+    if (!_isGrounded && wallJump) {
+      final top = y - anchor.y + 4, height = h - 8;
+      bool solid(double left) => _tilesNear(Rect.fromLTWH(left, top, 2, height)).any((tile) => tile.kind.blocks && tile.rect.overlaps(Rect.fromLTWH(left, top, 2, height)));
+      if (solid(x - anchor.x - 2)) _wallDir = -1;
+      if (solid(x - anchor.x + w)) _wallDir = 1;
+    }
 
     // 8. Events: the block most directly overhead was bumped; hazards touched
     final self = entity;
@@ -300,6 +387,44 @@ class CharacterController2DComponent extends EmberComponent {
           },
           step: 10.0,
         ),
+        InspectableProperty<int>(
+          name: 'airJumps',
+          label: 'Air Jumps',
+          type: InspectableType.integer,
+          getter: () => airJumps,
+          setter: (val) {
+            airJumps = val.clamp(0, 5);
+            notifyListeners();
+          },
+          min: 0,
+          max: 5,
+          step: 1,
+          tooltip: '1 = double jump',
+        ),
+        InspectableProperty<bool>(
+          name: 'wallJump',
+          label: 'Wall Jump',
+          type: InspectableType.boolean,
+          getter: () => wallJump,
+          setter: (val) {
+            wallJump = val;
+            notifyListeners();
+          },
+          tooltip: 'Slide down walls and jump off them',
+        ),
+        InspectableProperty<double>(
+          name: 'dashSpeed',
+          label: 'Dash Speed',
+          type: InspectableType.number,
+          getter: () => dashSpeed,
+          setter: (val) {
+            dashSpeed = val < 0 ? 0 : val;
+            notifyListeners();
+          },
+          min: 0,
+          step: 20,
+          tooltip: '0 = no dash; scripts call controller.dash()',
+        ),
       ];
 
   @override
@@ -311,6 +436,11 @@ class CharacterController2DComponent extends EmberComponent {
       'coyoteTimeDuration': coyoteTimeDuration,
       'jumpBufferDuration': jumpBufferDuration,
       'groundY': groundY,
+      if (airJumps != 0) 'airJumps': airJumps,
+      if (wallJump) 'wallJump': true,
+      if (wallSlideSpeed != 110) 'wallSlideSpeed': wallSlideSpeed,
+      if (dashSpeed != 0) 'dashSpeed': dashSpeed,
+      if (dashTime != 0.18) 'dashTime': dashTime,
     };
   }
 
@@ -322,6 +452,11 @@ class CharacterController2DComponent extends EmberComponent {
     coyoteTimeDuration = (json['coyoteTimeDuration'] as num?)?.toDouble() ?? 0.12;
     jumpBufferDuration = (json['jumpBufferDuration'] as num?)?.toDouble() ?? 0.10;
     groundY = (json['groundY'] as num?)?.toDouble() ?? 500.0;
+    airJumps = (json['airJumps'] as num?)?.toInt() ?? 0;
+    wallJump = json['wallJump'] as bool? ?? false;
+    wallSlideSpeed = (json['wallSlideSpeed'] as num?)?.toDouble() ?? 110;
+    dashSpeed = (json['dashSpeed'] as num?)?.toDouble() ?? 0;
+    dashTime = (json['dashTime'] as num?)?.toDouble() ?? 0.18;
     notifyListeners();
   }
 
@@ -334,6 +469,11 @@ class CharacterController2DComponent extends EmberComponent {
       coyoteTimeDuration: coyoteTimeDuration,
       jumpBufferDuration: jumpBufferDuration,
       groundY: groundY,
+      airJumps: airJumps,
+      wallJump: wallJump,
+      wallSlideSpeed: wallSlideSpeed,
+      dashSpeed: dashSpeed,
+      dashTime: dashTime,
     );
   }
 }

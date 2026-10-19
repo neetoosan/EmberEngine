@@ -25,6 +25,22 @@ import '../../templates/arena_game.dart';
 import '../../templates/arena_scripts.dart';
 import '../../templates/gems_game.dart';
 import '../../templates/gems_scripts.dart';
+import '../../templates/bastion_game.dart';
+import '../../templates/clash_game.dart';
+import '../../templates/kindred_game.dart';
+import '../../templates/kindred_scripts.dart';
+import '../../templates/clash_scripts.dart';
+import '../../templates/depths_game.dart';
+import '../../templates/isles_game.dart';
+import '../../templates/pulse_game.dart';
+import '../../templates/pulse_scripts.dart';
+import '../../templates/isles_scripts.dart';
+import '../../templates/spire_game.dart';
+import '../../templates/spire_scripts.dart';
+import '../../templates/depths_scripts.dart';
+import '../../templates/bastion_scripts.dart';
+import '../../templates/nova_game.dart';
+import '../../templates/nova_scripts.dart';
 import '../../templates/siege_game.dart';
 import '../../templates/solitaire_game.dart';
 import '../../templates/solitaire_scripts.dart';
@@ -35,6 +51,14 @@ import 'project_manifest.dart';
 
 /// Identifier enum for built-in starter templates.
 enum ProjectTemplateType {
+  kindred,
+  clash,
+  pulse,
+  isles,
+  spire,
+  depths,
+  bastion,
+  nova,
   arena,
   gems,
   solitaire,
@@ -93,6 +117,62 @@ class ProjectTemplate {
 
     // Build template specific scene & scripts
     switch (type) {
+      case ProjectTemplateType.kindred:
+        project.scenes[Kindred.title] = buildKindredTitle();
+        project.scenes[Kindred.grove] = buildKindredGrove();
+        project.defaultSceneName = Kindred.title;
+        project.scripts.addAll(kindredScripts); // editable in the Script workspace
+        project.assets.addAll(Kindred.assetFiles);
+        break;
+      case ProjectTemplateType.clash:
+        project.scenes[Clash.title] = buildClashTitle();
+        project.scenes[Clash.arena] = buildClashArena();
+        project.defaultSceneName = Clash.title;
+        project.scripts.addAll(clashScripts); // editable in the Script workspace
+        project.assets.addAll(Clash.assetFiles);
+        break;
+      case ProjectTemplateType.pulse:
+        project.scenes[Pulse.title] = buildPulseTitle();
+        project.scenes[Pulse.stage] = buildPulseStage();
+        project.defaultSceneName = Pulse.title;
+        project.scripts.addAll(pulseScripts); // the scripts and the three charts, editable in the Script workspace
+        project.assets.addAll(Pulse.assetFiles);
+        break;
+      case ProjectTemplateType.isles:
+        project.scenes[Isles.title] = buildIslesTitle();
+        project.scenes[Isles.island] = buildIslesIsland();
+        project.defaultSceneName = Isles.title;
+        project.scripts.addAll(islesScripts); // editable in the Script workspace
+        project.assets.addAll(Isles.assetFiles);
+        break;
+      case ProjectTemplateType.spire:
+        project.scenes[Spire.title] = buildSpireTitle();
+        project.scenes[Spire.world] = buildSpireWorld();
+        project.defaultSceneName = Spire.title;
+        project.scripts.addAll(spireScripts); // editable in the Script workspace
+        project.assets.addAll(Spire.assetFiles);
+        break;
+      case ProjectTemplateType.depths:
+        project.scenes[Depths.title] = buildDepthsTitle();
+        project.scenes[Depths.dungeon] = buildDepthsDungeon();
+        project.defaultSceneName = Depths.title;
+        project.scripts.addAll(depthsScripts); // editable in the Script workspace
+        project.assets.addAll(Depths.assetFiles);
+        break;
+      case ProjectTemplateType.bastion:
+        project.scenes[Bastion.title] = buildBastionTitle();
+        project.scenes[Bastion.battle] = buildBastionBattle();
+        project.defaultSceneName = Bastion.title;
+        project.scripts.addAll(bastionScripts); // editable in the Script workspace
+        project.assets.addAll(Bastion.assetFiles);
+        break;
+      case ProjectTemplateType.nova:
+        project.scenes[Nova.title] = buildNovaTitle();
+        project.scenes[Nova.stage] = buildNovaStage();
+        project.defaultSceneName = Nova.title;
+        project.scripts.addAll(novaScripts); // editable in the Script workspace
+        project.assets.addAll(Nova.assetFiles);
+        break;
       case ProjectTemplateType.arena:
         project.scenes[Arena.title] = buildArenaTitle();
         project.scenes[Arena.level] = buildArenaLevel();
@@ -484,6 +564,142 @@ class TemplateCatalog {
         'Undo, hints and auto-finish',
         'Score, moves, timer and saved records',
         'A full pixel-art deck to reuse in other card games',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.kindred,
+      title: 'Ember Kindred',
+      subtitle: 'Co-op Arena (1-4 players)',
+      description:
+          'Four lantern spirits hold a moonlit grove against ten waves of shadow and the Hollow. Up to four players share one screen, on keyboard halves or gamepads, and friends join at any time. The camera zooms out to keep everyone in view, a bond of light between spirits burns whatever crosses it, and a fallen spirit gets back up when a friend stays close.',
+      icon: Icons.groups_rounded,
+      accentColor: Color(0xFF5EEAD4),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Co-op', 'Local multiplayer', 'Gamepad', 'Modern', 'Music'],
+      features: [
+        'Drop-in play for 1 to 4 players (keyboard halves, gamepads)',
+        'A shared camera that zooms to fit every player',
+        'Light bonds between players that burn enemies',
+        'Revive a fallen friend by staying close; ten waves and a boss',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.clash,
+      title: 'Ember Clash',
+      subtitle: 'Fighting Game',
+      description:
+          'Kai of the ember temple against Ryn of the frost clan, best of three rounds. Jabs, kicks, low kicks and air kicks, an orb on down, down-forward, forward and a rising strike on forward, down, down-forward. Guard high and low, chain combos, play the CPU on three levels or a second player on the keyboard or gamepads.',
+      icon: Icons.sports_martial_arts_rounded,
+      accentColor: Color(0xFFF97316),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Fighting', 'Local multiplayer', 'Gamepad', 'Music'],
+      features: [
+        'Frame-data moves at a fixed 60 steps a second',
+        'Motion inputs from the input buffer (236, 623)',
+        'Guarding high and low, hitstop, combos, rounds and a timer',
+        'CPU opponent on three levels, or 2 players (keyboard or pads)',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.pulse,
+      title: 'Ember Pulse',
+      subtitle: 'Rhythm Game',
+      description:
+          'Notes fall down four neon lanes in time with Neon Drift, a synthwave track. Hit them as they reach the line, hold the long ones, keep the combo going. Easy, Normal and Hard charts, Perfect / Great / Good timing, accuracy and grades, best scores, and an audio offset for your speakers.',
+      icon: Icons.music_note_rounded,
+      accentColor: Color(0xFFF472B6),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Rhythm', 'Music', 'Modern'],
+      features: [
+        'Music.time: a clock that follows the music you hear',
+        'Charts as plain text files (time, lane, hold)',
+        'Taps and holds, judgement windows, combo and grades',
+        'Audio offset calibration, pause, best scores',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.isles,
+      title: 'Ember Isles',
+      subtitle: 'Isometric Colony Strategy',
+      description:
+          'Settle an island grown from a seed. Houses bring people, farms feed them, lumber camps and quarries bring wood and stone. Raiders land every few minutes: train guards, drag a box to select them, right-click to send them, and build watchtowers. Light the Ember Beacon to win.',
+      icon: Icons.sailing_rounded,
+      accentColor: Color(0xFF38BDF8),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Strategy', 'City builder', 'Isometric', 'Music'],
+      features: [
+        'Isometric TileMap (also hex), Y-sorted buildings and units',
+        'Box selection, right-click orders, grid path finding',
+        'Resources, buildings with rules, raids and towers',
+        'Islands grown from a seed with noise',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.spire,
+      title: 'Ember Spire',
+      subtitle: 'Metroidvania',
+      description:
+          'Nine linked rooms of glowing crystal caverns. Find the double jump, the dash and the wall jump to reach new places, rest at shrines to save, fill in the map as you explore, and defeat the Thornback to claim the Ember Heart. Sword combat, heart containers, gems and a best time.',
+      icon: Icons.terrain_rounded,
+      accentColor: Color(0xFF2DD4BF),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Metroidvania', 'Platformer', 'Exploration', 'Music'],
+      features: [
+        'Camera Room 2D: the view keeps to each room and glides between them',
+        'UI Minimap that fills in as you explore (saved with the game)',
+        'Double jump, dash and wall jump on the platformer controller',
+        'Save shrines, a boss with charges and shockwaves, best time',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.depths,
+      title: 'Ember Depths',
+      subtitle: 'Roguelike Dungeon Crawler',
+      description:
+          'Every floor is a new dungeon grown from a seed: rooms, corridors and torch-lit walls. Cast at slimes, bats, skeleton archers and the Ember Warden, open chests for relics that change how you fight, and see how deep you get. Death is final; share a seed or play the daily dungeon.',
+      icon: Icons.local_fire_department_outlined,
+      accentColor: Color(0xFFF97316),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Roguelike', 'Procedural', 'Lighting', 'Music'],
+      features: [
+        'Seeded dungeon generation with auto-tiled walls',
+        "Light 2D: darkness, torches and the hero's light",
+        'Monster AI hunters, relics, chests and stairs',
+        'Permadeath, best floor, same-seed and daily runs',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.bastion,
+      title: 'Ember Bastion',
+      subtitle: 'Tower Defense',
+      description:
+          'Goblins, wolves, golems, wisps and dark knights march down the road to your keep. Build Archer, Cannon, Frost and Tesla towers on the grass, upgrade them twice, sell them, and survive 15 waves on Normal or Hard. Splash damage, slowing frost, chain lightning, health bars and stars.',
+      icon: Icons.castle_rounded,
+      accentColor: Color(0xFF4ADE80),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Tower defense', 'Strategy', 'Modern', 'Music'],
+      features: [
+        'Path Follower 2D: enemies walk a road drawn with a Line 2D',
+        'Grid building, upgrades and selling, range previews',
+        'Homing and splash shots, slowing frost, chain lightning',
+        '15 waves, Normal and Hard, health bars and stars',
+      ],
+    ),
+    ProjectTemplate(
+      type: ProjectTemplateType.nova,
+      title: 'Ember Nova',
+      subtitle: "Neon Shoot-'em-up",
+      description:
+          'A side-scrolling space shooter with modern neon art. Waves of drones, darts, turrets, spinners and cruisers fill the screen with glowing bullet patterns, then the three-phase Ember Dreadnought. Power-ups, bombs, shields, grazing for a score multiplier, and loops that get harder.',
+      icon: Icons.rocket_launch_rounded,
+      accentColor: Color(0xFF22D3EE),
+      defaultPipeline: RenderPipelineMode.twoD,
+      tags: ['2D', 'Shooter', 'Bullet hell', 'Modern', 'Music'],
+      features: [
+        'Bullet Pool 2D: thousands of glowing bullets in one batch',
+        'Rings, spreads, spirals and curving shots from Ember Script',
+        'A three-phase boss, bombs, shields and power levels',
+        'Parallax space, glow particles, screen flash and shake',
       ],
     ),
     ProjectTemplate(

@@ -27,6 +27,14 @@ The **Project Hub** opens first. Pick a starter template:
 | Template | What you get when you press Play |
 |---|---|
 | Ember Arena | A first-person 3D wave shooter: exploding drones, strafing gunners and charging brutes come through four portals; blaster and scatter gun, health and ammo drops, endless waves, best wave and score, music |
+| Ember Kindred | Co-op for 1 to 4 players on one screen: lantern spirits hold a moonlit grove for ten waves and beat the Hollow; friends join at any time on keyboard halves or gamepads, the camera zooms to fit everyone, light bonds between spirits burn shadows, stay close to a fallen friend to revive them |
+| Ember Clash | A 1v1 fighting game: Kai against Ryn, best of three; jabs, kicks, low and air kicks, an orb (↓↘→ + jab) and a rising strike (→↓↘ + jab), guarding high and low, combos, CPU on three levels or 2 players on keyboard or gamepads |
+| Ember Pulse | A four-lane rhythm game: notes fall in time with Neon Drift, a synthwave song; taps and holds, Perfect / Great / Good, combo, accuracy and grades, Easy / Normal / Hard, best scores, audio offset calibration |
+| Ember Isles | Isometric colony strategy: an island grown from a seed; houses, farms, lumber camps, quarries and watchtowers; raiders land from the sea; train guards, box-select them and right-click to send them; light the Ember Beacon to win, music |
+| Ember Spire | A metroidvania in glowing crystal caverns: nine linked rooms, a map that fills in as you explore, double jump, dash and wall jump that open new ways, save shrines, crawlers, moths and the Thornback, the Ember Heart, best time, music |
+| Ember Depths | A roguelike dungeon crawler: every floor is generated from a seed, lit only by torches and your light; cast at slimes, bats, skeleton archers and the Ember Warden, open chests for relics, permadeath, best floor, same-seed and daily runs, music |
+| Ember Bastion | Tower defense: goblins, wolves, golems, wisps and dark knights march to your keep; build Archer, Cannon, Frost and Tesla towers on the grass, upgrade and sell them, 15 waves on Normal or Hard, stars, music |
+| Ember Nova | A neon side-scrolling shooter: drones, darts, turrets, spinners and cruisers fill the screen with glowing bullet patterns, then a three-phase boss; power levels, bombs, shields, grazing for a score multiplier, loops that get harder, synthwave music |
 | Ember Gems | A match-3 puzzle: swap gems to line up 3+, striped gems from 4, star gems from 5, chain reactions, hints, 3 levels (score goal, collect rubies, break ice), moves, stars, unlocks, music |
 | Ember Solitaire | Klondike solitaire, Draw 1 or Draw 3: drag or click cards, stock and waste, undo, hints, auto-finish, score and timer, best time and wins per mode |
 | The Last Ember | A short visual novel: two characters with four expressions each, painted backgrounds, three choices, four endings, history log, auto and skip, save/load slots, music |
@@ -83,6 +91,28 @@ While the game runs, keys go to the game:
 - **2D platformer / Ember Quest**: `A`/`D` or arrows move; `Space`, `W` or `Up`
   jump (hold for higher); `Shift` run. Land on slimes to squash them, hit
   "?" blocks from below, eat the berry to grow (big heroes break bricks).
+- **Ember Kindred**: player 1 `WASD` moves, hold `F` to shoot (it aims at the nearest
+  shadow), `G` dashes; player 2 joins with `,` and plays on the arrows with `,` shoot
+  and `.` dash. Players 3 and 4 join with `X` on pads 3 and 4 (stick, `X` shoot, `Y`
+  dash). `P`, `Esc` or `Start` pauses.
+- **Ember Clash**: player 1 `WASD` moves (`W` jumps, `S` crouches), `F` jab, `G` kick,
+  `H` or holding back guards; player 2 the arrows with `,` `.` `/`. Gamepads: stick or
+  D-pad, `X` jab, `Y` kick, `B` guard, `A` jump, `Start` pauses.
+- **Ember Pulse**: `D` `F` `J` `K` (or the arrow keys, or tap a lane) as notes reach the
+  line; hold long notes; `P` pauses. If hits feel late, raise the audio offset on the title.
+- **Ember Isles**: click a building at the bottom, then the island (hold `Shift` to
+  keep building); drag a box to select guards, right-click to send them; `WASD` or
+  arrows move the view; `G` trains a guard; `Esc` cancels.
+- **Ember Spire**: `A`/`D` or arrows run, `Space` (or `Z`, `K`) jumps, `J` / `X` / click
+  swings the sword, `Shift` or `C` dashes once found, `W` / `Up` rests at shrines.
+- **Ember Depths**: `WASD` moves, the mouse (hold the button) or the arrow keys
+  aim and cast, `Space` casts at the mouse, `Shift` dashes (no damage mid-dash).
+- **Ember Bastion**: click a tower in the bottom bar (or `1`–`4`), then the grass;
+  hold `Shift` to keep building. Click a tower to upgrade or sell it. `Space`
+  starts the next wave, `F` doubles the speed, `Esc` cancels.
+- **Ember Nova**: arrows / `WASD` fly (the ship fires by itself), hold `Shift`
+  to fly slowly and see the hit point, `X` (or `K`, `B`, the BOMB button) bombs,
+  `P` pauses. Or drag anywhere with the mouse or a finger to steer.
 - **Ember Gems**: drag a gem onto a neighbour (or click one, then the other)
   to swap them. A hint glows after a few idle seconds.
 - **Ember Solitaire**: drag cards, or click one to send it to the best place;
@@ -157,7 +187,7 @@ void onTriggerEnter(other) {
   stopped. `print(...)` goes to **Output** and the Console.
 - Edits to a script apply to the running game as soon as they are valid,
   keeping its variables' values.
-- The **Ember Gems, Ember Solitaire, Ember Siege, Ember Legends, Ember Quest and Flappy Arcade** templates are written in
+- The **Ember Kindred, Ember Clash, Ember Pulse, Ember Isles, Ember Spire, Ember Depths, Ember Bastion, Ember Nova, Ember Gems, Ember Solitaire, Ember Siege, Ember Legends, Ember Quest and Flappy Arcade** templates are written in
   Ember Script: open the Script workspace in a project made from one to read and
   change the hero, monsters, boss, pipes and so on. Their scenes show the prefab
   pattern: hidden "… Template" entities (loot, pipes, sword slash) copied with
@@ -210,7 +240,68 @@ class Enemy extends GameScript {
 - **Sprite Animator:** named clips on a sprite sheet, written like
   `idle=0-1@3; run=2-4@12; jump=5; die=6@1!` (`!` = play once). Scripts call
   `animator.play('run')`; the Platformer 2D Controller does this automatically.
-- **Parallax Layer:** backgrounds that scroll slower than the camera and repeat sideways.
+- **Parallax Layer:** backgrounds that scroll slower than the camera and repeat
+  sideways (and up/down). *Auto Scroll* moves a layer by itself: starfields, clouds.
+- **Modern look:** *Glow (additive)* on a sprite makes it add up like light (lasers,
+  flames, cores); *Glow* particles are soft and bright; a Camera 2D has a
+  *Vignette* and `camera.flash(color, seconds)`; UI Text can *Glow* and space its
+  letters; UI Buttons have an *outline* style; UI Images can scale smoothly.
+- **Bullet Pool 2D:** thousands of bullets on one entity, drawn in one batch. From a
+  script: `self.bullets.fire(pos, angle, speed)`, `ring(pos, count, speed)`,
+  `spread(pos, angle, count, arc, speed)` (named: `frame`, `curve` in degrees per
+  second, `accel`, `maxSpeed`, `scale`, `damage`), `clear()`, `clearAround(pos, r)`.
+  Bullets hurt Health of other teams, pass through flashing targets, and with a
+  *Graze Radius* send `onGraze()` to whoever they just missed. `angleTo(a, b)` aims.
+  A bullet can home in (`target: enemy`, `turn`) and explode (`splash: 50`); every
+  hit sends `onBulletHit(position, victim, frame)` to the pool's scripts.
+- **Path Follower 2D:** walks an entity along the points of a Line 2D (enemies on a
+  road, patrols, rails): speed, loop, face direction, `follower.slow(0.5, 2)`,
+  `progress` (0–1) and `onPathEnd()`. `line.distanceTo(point)` keeps towers off it.
+- **Grids and areas:** `snap(point, 40)` gives the grid cell's centre;
+  `findInRange("enemy", point, radius)` lists what is near, nearest first.
+  Health can show a small *Health Bar* above a hurt entity, and flash *white* when hit.
+  UI Buttons can show an *Icon* (an image or a sprite-sheet cell).
+- **Lights:** give a Camera 2D some *Darkness* and add **Light 2D** components
+  (radius, colour, intensity, *Flicker*) to torches, lanterns or the player. Glowing
+  sprites, particles, bullets and lines are drawn above the dark.
+- **Generated levels:** `Random(seed)` gives numbers that repeat for the same seed
+  (`r.integer(10)`, `r.range(a, b)`, `r.pick(list)`); `noise(x, y)` is smooth noise.
+  On a TileMap, `tilemap.dungeon(seed)` carves rooms and corridors (and returns the
+  rooms), `tilemap.cave(seed)` grows caves, `tilemap.autotile(wall, first)` picks
+  one of 16 wall pieces by neighbours, `vary(id, [ids], chance)` adds variety, and
+  `getTile` / `setTile` / `cellAt` / `cellCenter` / `cellsWith` read and write it.
+  *Smooth Scaling* on a TileMap suits painted tiles; a Bullet Pool can *Stop at Walls*.
+  `Game.today` (e.g. 20261018) seeds daily challenges.
+- **Metroidvania tools:** the Character Controller 2D has *Air Jumps* (double jump),
+  *Wall Jump* (slide down walls and jump off) and *Dash Speed* (`controller.dash()`),
+  with `onAirJump()`, `onWallJump()` and `onDash()` events. A **Camera Room 2D** marks
+  an area the camera keeps to while the player is in it (it glides to the next room
+  and sends `onRoomEnter(room)`). A **UI Minimap** draws a tilemap, revealing rooms as
+  they are visited, with marker dots by tag; save `minimap.explored` with the game.
+- **Strategy tools:** a TileMap's *Layout* can be *isometric* (diamonds, drawn back
+  to front so tall tiles overlap) or *hex*; `cellAt`, `cellCenter` and
+  `tilemap.findPath(c0, r0, c1, r1)` work on every layout, and
+  `tilemap.block(col, row, true)` keeps paths off buildings. *Y-Sort* on a
+  Transform 2D draws things lower on the screen in front. `findInBox(tag, a, b)`
+  with `Input.dragStart` selects units; `Input.rightClick` gives orders. `find(name)`
+  prefers a visible entity, so it finds spawned copies rather than hidden templates.
+- **Rhythm and music:** `Music.time` is a clock of the music actually heard: it waits
+  until playback starts, follows the device's position, stops on `Music.pause()`,
+  and has an `offset` for calibration (`Music.playing`, `ended`, `resume()`, `stop()`).
+  `playMusic(file, volume, loop: false)` plays a song once. `readText(file)` reads a
+  text file from the Script workspace (charts, level lists).
+- **Gamepads and players:** Xbox, PlayStation and generic pads work on Windows,
+  Android, the web, macOS and Linux. Pad 1 also drives `Input.move` and
+  `Input.action(...)`, so games written for the keyboard work on a pad. For
+  several players, `Input.player(1)` / `Input.player(2)` give each one half of the
+  keyboard plus their pad: `.move`, `.key("attack")`, `.pressed`, `.buffered`, and
+  `.motion("236", "attack", facingRight: true)` for fighting-game moves.
+  `Input.pad(n)` reads a pad directly (`.button("a")`, `.stick`, `.trigger("left")`).
+  Players 3 and 4 use pads 3 and 4. A UI Bar can *Fill From Right*.
+- **Shared screen:** a Camera 2D can follow several entities (*Follow Entity*
+  `Sol, Lume, Iris, Wren`; hidden ones are skipped). With *Zoom To Fit Targets* it
+  zooms between *Min Zoom* and *Max Zoom* so everyone stays in view, and
+  `camera.keepInView(entity, margin)` stops a player walking off the screen.
 
 ## 2D physics (Rigid Body 2D)
 
@@ -462,7 +553,6 @@ flutter test
 - No 3D model (glTF/OBJ) import yet; 2D images and sounds can be imported.
 - Export targets are Windows (.exe, installer, MSIX), web and Android (APK,
   signed app bundle); macOS, Linux and iOS export are not available yet.
-- No gamepad input yet.
 - Stories can't be translated yet (one language per `.story` file), and text
   effects are limited to `*stress*`.
 - Mouse capture is available on Windows and the web; on macOS and Linux,

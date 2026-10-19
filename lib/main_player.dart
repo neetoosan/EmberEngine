@@ -8,6 +8,7 @@ import 'core/crash_reporter.dart';
 import 'core/engine_loop.dart';
 import 'core/save_data.dart';
 import 'core/event_bus.dart';
+import 'core/gamepad.dart';
 import 'core/input.dart';
 import 'core/scene.dart';
 import 'editor/hub/project_manifest.dart';
@@ -37,6 +38,9 @@ void main(List<String> args) async {
   // Saved progress is loaded before the first scene starts, so its scripts see it.
   // Keyed by project name (not display title) so renaming the game keeps saves.
   await SaveData.instance.open(project?.name ?? 'Ember Demo');
+  // Right-click belongs to the game (strategy games), not the browser menu
+  if (kIsWeb) BrowserContextMenu.disableContextMenu();
+  GamepadInput.instance.start();
   runApp(EmberPlayerApp(project: project));
 }
 

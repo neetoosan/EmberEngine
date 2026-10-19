@@ -132,6 +132,16 @@ class Transform2DComponent extends EmberComponent {
     notifyListeners();
   }
 
+  /// Within its Z-Index, drawn in front of things higher on the screen (lower
+  /// on the screen = closer): top-down and isometric scenes.
+  bool _ySort = false;
+  bool get ySort => _ySort;
+  set ySort(bool val) {
+    _ySort = val;
+    EmberEntity.structureVersion++;
+    notifyListeners();
+  }
+
   int get zIndex => _zIndex;
   set zIndex(int val) {
     _zIndex = val;
@@ -247,6 +257,14 @@ class Transform2DComponent extends EmberComponent {
           step: 1.0,
           tooltip: 'Rendering order layer',
         ),
+        InspectableProperty<bool>(
+          name: 'ySort',
+          label: 'Y-Sort',
+          type: InspectableType.boolean,
+          getter: () => _ySort,
+          setter: (val) => ySort = val,
+          tooltip: 'Lower on the screen is drawn in front (top-down, isometric)',
+        ),
       ];
 
   // --- Serialization ---
@@ -260,6 +278,7 @@ class Transform2DComponent extends EmberComponent {
       'size': [_size.x, _size.y],
       'anchor': _anchor.name,
       'zIndex': _zIndex,
+      if (_ySort) 'ySort': true,
     };
   }
 
@@ -290,6 +309,7 @@ class Transform2DComponent extends EmberComponent {
     if (json.containsKey('zIndex')) {
       _zIndex = json['zIndex'] as int? ?? 0;
     }
+    _ySort = json['ySort'] as bool? ?? false;
     notifyListeners();
   }
 
@@ -302,6 +322,6 @@ class Transform2DComponent extends EmberComponent {
       size: _size.clone(),
       anchor: _anchor,
       zIndex: _zIndex,
-    );
+    ).._ySort = _ySort;
   }
 }

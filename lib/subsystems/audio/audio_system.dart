@@ -112,18 +112,79 @@ class AudioSystem with ChangeNotifier {
   /// The currently playing background music, if any.
   AudioVoice? get music => _music;
 
-  /// Starts looping background music from an audio file (e.g.
-  /// `assets/audio/theme.ogg`), replacing any music already playing.
-  AudioVoice playMusic(String clip, {double volume = 1.0}) {
-    if (_music != null && _music!.clip == clip && _music!.isPlaying) return _music!;
+  /// Starts background music from an audio file (e.g. `assets/audio/theme.ogg`),
+  /// replacing any music already playing. It loops unless [loop] is false (a
+  /// song in a rhythm game). Restarting the same looping music does nothing.
+  AudioVoice playMusic(String clip, {double volume = 1.0, bool loop = true}) {
+    if (loop && _music != null && _music!.clip == clip && _music!.isPlaying) return _music!;
     stopMusic();
-    return _music = play(clip: clip, category: AudioCategory.music, volume: volume, looping: true, duration: double.infinity);
+    _musicTime = 0;
+    _musicEnded = false;
+    _musicPaused = false;
+    // Without a real device the clock runs at once (tests, tools); with one it
+    // waits until playback has really begun
+    _musicRunning = backend == null;
+    return _music = play(clip: clip, category: AudioCategory.music, volume: volume, looping: loop, duration: double.infinity);
   }
 
   void stopMusic() {
     final m = _music;
     _music = null;
+    _musicRunning = false;
     if (m != null) stop(m);
+  }
+
+  // --- The music clock (rhythm games) -----------------------------------------
+
+  double _musicTime = 0;
+  bool _musicRunning = false;
+  bool _musicPaused = false;
+  bool _musicEnded = false;
+
+  /// Added to [musicTime]: positive if sounds reach the player late (Bluetooth
+  /// headphones), so the game can be calibrated.
+  double musicOffset = 0;
+
+  /// Seconds of the current music that have been heard (0 until it starts).
+  /// Runs on real time, is corrected by the device's playback position, and
+  /// stops while paused.
+  double get musicTime => _musicTime - musicOffset;
+  bool get musicPlaying => _music != null && _musicRunning && !_musicPaused && !_musicEnded;
+  bool get musicPaused => _musicPaused;
+
+  /// True once music played with `loop: false` has finished.
+  bool get musicEnded => _musicEnded;
+
+  void pauseMusic() {
+    final m = _music;
+    if (m == null || _musicPaused) return;
+    _musicPaused = true;
+    backend?.pause(m);
+  }
+
+  void resumeMusic() {
+    final m = _music;
+    if (m == null || !_musicPaused) return;
+    _musicPaused = false;
+    backend?.resume(m);
+  }
+
+  /// Called by the backend when [voice] really starts playing.
+  void musicStarted(AudioVoice voice) {
+    if (identical(voice, _music)) _musicRunning = true;
+  }
+
+  /// Called by the backend with the device's playback position of [voice].
+  void musicPosition(AudioVoice voice, double seconds) {
+    if (!identical(voice, _music) || _musicPaused) return;
+    _musicRunning = true;
+    // Small differences are frame jitter; big ones mean the clock drifted
+    if ((seconds - _musicTime).abs() > 0.04) _musicTime = seconds;
+  }
+
+  /// Called by the backend when non-looping music reaches its end.
+  void musicFinished(AudioVoice voice) {
+    if (identical(voice, _music)) _musicEnded = true;
   }
 
   double get masterVolume => _masterVolume;
@@ -274,6 +335,7 @@ class AudioSystem with ChangeNotifier {
 
   /// Master frame update: evaluates ducking, 3D attenuation, and voice lifetimes.
   void update(double dt) {
+    if (_music != null && _musicRunning && !_musicPaused && !_musicEnded) _musicTime += dt;
     // 0. Update bus duck states
     _duckStates.removeWhere((cat, state) {
       state.remaining -= dt;
@@ -369,6 +431,8 @@ abstract class AudioBackend {
   void play(AudioVoice voice, double volume, double pan);
   void stop(AudioVoice voice);
   void stopAll();
+  void pause(AudioVoice voice) {}
+  void resume(AudioVoice voice) {}
 }
 
 /// Buffer containing synthesized raw PCM audio samples.

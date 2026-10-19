@@ -102,10 +102,18 @@ class AudioOutput implements AudioBackend {
       if (!voice.isPlaying) return; // stopped while loading
 
       final AudioPlayer player;
-      if (voice.isLooping) {
+      final isMusic = voice.category == AudioCategory.music;
+      if (voice.isLooping || isMusic) {
+        // Music always has its own player (sound effects must not cut it)
         player = AudioPlayer();
         _dedicated[voice.id] = player;
-        await player.setReleaseMode(ReleaseMode.loop);
+        await player.setReleaseMode(voice.isLooping ? ReleaseMode.loop : ReleaseMode.stop);
+        if (isMusic) {
+          player.onPositionChanged.listen((p) => AudioSystem.instance.musicPosition(voice, p.inMicroseconds / 1e6));
+          player.onPlayerComplete.listen((_) {
+            if (!voice.isLooping) AudioSystem.instance.musicFinished(voice);
+          });
+        }
       } else {
         player = await _acquirePooled(voice.id);
       }
@@ -119,6 +127,7 @@ class AudioOutput implements AudioBackend {
         // Balance / rate are not supported on every platform.
       }
       await player.play(source);
+      if (voice.category == AudioCategory.music) AudioSystem.instance.musicStarted(voice);
     } catch (e) {
       if (!_reportedError) {
         _reportedError = true;
@@ -147,6 +156,12 @@ class AudioOutput implements AudioBackend {
 
   @override
   void stop(AudioVoice voice) => _release(voice.id);
+
+  @override
+  void pause(AudioVoice voice) => unawaited(_dedicated[voice.id]?.pause());
+
+  @override
+  void resume(AudioVoice voice) => unawaited(_dedicated[voice.id]?.resume());
 
   @override
   void stopAll() {

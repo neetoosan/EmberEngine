@@ -1,4 +1,6 @@
+import 'gamepad.dart';
 import 'mouse_lock.dart';
+import 'player_input.dart';
 import 'package:flutter/services.dart';
 import 'package:vector_math/vector_math_64.dart' as vm;
 
@@ -166,7 +168,11 @@ class InputManager {
     onMouseMove(_mousePosition, delta);
   }
 
+  /// World position where the left button last went down (start of a drag).
+  vm.Vector2 dragStart = vm.Vector2.zero();
+
   void onMouseDown(int button) {
+    if (button == 0 && !_mouseButtons.contains(0)) dragStart = mouseWorldPosition.clone();
     if (!_mouseButtons.contains(button)) {
       _justPressedMouseButtons.add(button);
     }
@@ -213,7 +219,27 @@ class InputManager {
   /// Checks if a key was released in this exact frame.
   bool isKeyJustReleased(LogicalKeyboardKey key) => _justReleasedKeys.contains(key);
 
-  /// Checks if a high-level action is held down (Keyboard + Virtual Touch).
+  /// Gamepad 1 buttons for each action (the stick also moves).
+  static const Map<EngineAction, List<GamepadButton>> _padActions = {
+    EngineAction.jump: [GamepadButton.a],
+    EngineAction.fire: [GamepadButton.x, GamepadButton.rightBumper, GamepadButton.rightTrigger],
+    EngineAction.interact: [GamepadButton.y],
+    EngineAction.sprint: [GamepadButton.b, GamepadButton.leftBumper],
+    EngineAction.crouch: [GamepadButton.leftStick],
+    EngineAction.moveLeft: [GamepadButton.dpadLeft],
+    EngineAction.moveRight: [GamepadButton.dpadRight],
+    EngineAction.moveForward: [GamepadButton.dpadUp],
+    EngineAction.moveBackward: [GamepadButton.dpadDown],
+  };
+
+  bool _padAction(EngineAction a, bool Function(int, GamepadButton) test) {
+    for (final b in _padActions[a] ?? const <GamepadButton>[]) {
+      if (test(0, b)) return true;
+    }
+    return false;
+  }
+
+  /// Checks if a high-level action is held down (keyboard, gamepad 1, virtual touch).
   bool isActionPressed(dynamic action) {
     final actName = _actionName(action);
     if (_virtualActions.contains(actName)) return true;
@@ -226,6 +252,7 @@ class InputManager {
           if (_pressedKeys.contains(k)) return true;
         }
       }
+      if (_padAction(engineAction, GamepadInput.instance.isDown)) return true;
     }
     return false;
   }
@@ -243,6 +270,7 @@ class InputManager {
           if (_justPressedKeys.contains(k)) return true;
         }
       }
+      if (_padAction(engineAction, GamepadInput.instance.justPressed)) return true;
     }
     return false;
   }
@@ -260,6 +288,7 @@ class InputManager {
           if (_justReleasedKeys.contains(k)) return true;
         }
       }
+      if (_padAction(engineAction, GamepadInput.instance.justReleased)) return true;
     }
     return false;
   }
@@ -286,10 +315,12 @@ class InputManager {
       if (isActionPressed(EngineAction.moveLeft)) val -= 1.0;
       if (isActionPressed(EngineAction.moveRight)) val += 1.0;
       val += _virtualJoystickAxis.x;
+      val += GamepadInput.instance.axis(0, GamepadAxis.leftStickX);
     } else if (axisName == 'vertical') {
       if (isActionPressed(EngineAction.moveBackward)) val -= 1.0;
       if (isActionPressed(EngineAction.moveForward)) val += 1.0;
       val -= _virtualJoystickAxis.y; // Standard invert
+      val += GamepadInput.instance.axis(0, GamepadAxis.leftStickY);
     }
     return val.clamp(-1.0, 1.0);
   }
@@ -322,6 +353,8 @@ class InputManager {
 
   /// Flushes frame-specific triggers at end of tick.
   void endFrame() {
+    PlayerControls.recordAll();
+    GamepadInput.instance.endFrame();
     _justPressedKeys.clear();
     _justReleasedKeys.clear();
     _justPressedMouseButtons.clear();
@@ -333,6 +366,8 @@ class InputManager {
 
   /// Clears all input states (used on scene transition or unfocus).
   void reset() {
+    GamepadInput.instance.reset();
+    PlayerControls.resetAll();
     _pressedKeys.clear();
     _justPressedKeys.clear();
     _justReleasedKeys.clear();

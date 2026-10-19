@@ -6,6 +6,7 @@ import '../../core/entity.dart';
 import '../../core/inspectable.dart';
 import '../../core/scene.dart';
 import '../../core/transform2d.dart';
+import 'camera_room.dart';
 
 /// Where and how a 2D camera shows the world on screen.
 class CameraView2D {
@@ -60,6 +61,22 @@ class Camera2DComponent extends EmberComponent {
   /// (zoomed out), 2 shows half (zoomed in).
   double zoom;
 
+  /// Darkens the edges of the view (0 = off, 1 = strong), for focus and mood.
+  double vignette;
+
+  /// Darkness over the world (0 = none, 1 = pitch black) that Light 2D
+  /// components cut through: dungeons, night, caves.
+  double darkness;
+  Color darknessColor;
+
+  /// With several follow targets ("Sol, Lume"), zoom between [minZoom] and
+  /// [maxZoom] so all of them stay in view with [fitPadding] world pixels
+  /// to spare: a shared screen for local co-op.
+  bool fitTargets;
+  double minZoom;
+  double maxZoom;
+  double fitPadding;
+
   Camera2DComponent({
     this.designWidth = 640,
     this.designHeight = 360,
@@ -71,6 +88,13 @@ class Camera2DComponent extends EmberComponent {
     vm.Vector2? boundsMax,
     this.backgroundColor = const Color(0xFF121316),
     this.zoom = 1,
+    this.vignette = 0,
+    this.darkness = 0,
+    this.darknessColor = const Color(0xFF05060C),
+    this.fitTargets = false,
+    this.minZoom = 0.6,
+    this.maxZoom = 1,
+    this.fitPadding = 120,
   })  : deadZone = deadZone ?? vm.Vector2.zero(),
         boundsMin = boundsMin ?? vm.Vector2.zero(),
         boundsMax = boundsMax ?? vm.Vector2(640, 360);
@@ -123,7 +147,28 @@ class Camera2DComponent extends EmberComponent {
     _shakeTime = 0;
   }
 
+  // --- Screen flash ---
+
+  Color _flashColor = const Color(0x00000000);
+  double _flashTime = 0;
+  double _flashDuration = 0;
+
+  /// Fills the view with [color], fading out over [seconds] (hits, bombs, lightning).
+  void flash(Color color, double seconds) {
+    _flashColor = color;
+    _flashDuration = math.max(0.01, seconds);
+    _flashTime = 0;
+  }
+
+  /// The flash colour right now (transparent when there is none).
+  Color get flashColor {
+    if (_flashTime >= _flashDuration) return const Color(0x00000000);
+    final left = 1 - _flashTime / _flashDuration;
+    return _flashColor.withValues(alpha: _flashColor.a * left * left);
+  }
+
   void _updateShake(double dt) {
+    if (_flashTime < _flashDuration) _flashTime += dt;
     if (_shakeTime >= _shakeDuration) {
       _shakeOffset = vm.Vector2.zero();
       return;
@@ -143,28 +188,120 @@ class Camera2DComponent extends EmberComponent {
     final target = _targetPosition();
     if (t == null) return;
     var p = t.position.clone();
+    final k = smoothing <= 0 ? 1.0 : 1.0 - math.pow(smoothing.clamp(0.0, 0.999), dt * 60).toDouble();
+    final fit = _fitZoom();
+    if (fit != null) zoom += (fit - zoom) * k;
     if (target != null) {
-      final desired = p.clone();
+      var desired = p.clone();
       final d = target - p;
       if (d.x.abs() > deadZone.x) desired.x = target.x - deadZone.x * d.x.sign;
       if (d.y.abs() > deadZone.y) desired.y = target.y - deadZone.y * d.y.sign;
+      // Inside a Camera Room the view stays in the room (and glides to the next one)
+      final scene = entity?.scene;
+      final room = scene == null ? null : CameraRoom2DComponent.at(scene, Offset(target.x, target.y));
+      if (room != null) {
+        desired = _clampTo(desired, room.rect);
+        if (!identical(room, _room)) {
+          _room = room;
+          final roomEntity = room.entity;
+          if (roomEntity != null) {
+            scene!.findEntityByName(targetNames.first)?.notifyScripts((s) => s.onMessage('onRoomEnter', [roomEntity]));
+          }
+        }
+      }
       // Frame-rate independent exponential smoothing
-      final k = smoothing <= 0 ? 1.0 : 1.0 - math.pow(smoothing.clamp(0.0, 0.999), dt * 60).toDouble();
       p += (desired - p) * k;
     }
     t.position = _clamp(p);
+  }
+
+  CameraRoom2DComponent? _room;
+
+  /// The Camera Room the follow target is in (null if none).
+  CameraRoom2DComponent? get room => _room;
+
+  vm.Vector2 _clampTo(vm.Vector2 p, Rect r) {
+    final halfW = viewWidth / 2, halfH = viewHeight / 2;
+    double axis(double v, double lo, double hi) => hi < lo ? (lo + hi) / 2 : v.clamp(lo, hi);
+    return vm.Vector2(axis(p.x, r.left + halfW, r.right - halfW), axis(p.y, r.top + halfH, r.bottom - halfH));
   }
 
   /// Jumps straight to the follow target (used when a level starts).
   void snapToTarget() {
     final t = entity?.getComponent<Transform2DComponent>();
     final target = _targetPosition();
-    if (t != null && target != null) t.position = _clamp(target);
+    if (t == null || target == null) return;
+    final fit = _fitZoom();
+    if (fit != null) zoom = fit;
+    final scene = entity?.scene;
+    final room = scene == null ? null : CameraRoom2DComponent.at(scene, Offset(target.x, target.y));
+    t.position = _clamp(room == null ? target : _clampTo(target, room.rect));
   }
 
+  /// The names in [followTarget] ("Hero", or "Sol, Lume" for several).
+  List<String> get targetNames => [for (final n in followTarget.split(',')) if (n.trim().isNotEmpty) n.trim()];
+
+  /// Positions of the follow targets (only the enabled ones when there are several).
+  List<vm.Vector2> _targets() {
+    final scene = entity?.scene;
+    if (scene == null) return const [];
+    final names = targetNames;
+    if (names.length == 1) {
+      final p = scene.findEntityByName(names.first)?.getComponent<Transform2DComponent>()?.worldPosition;
+      return p == null ? const [] : [p];
+    }
+    return [
+      for (final n in names)
+        if (scene.findEntityByName(n) case final e? when e.enabled)
+          if (e.getComponent<Transform2DComponent>() case final t?) t.worldPosition,
+    ];
+  }
+
+  /// The middle of the box around every target.
   vm.Vector2? _targetPosition() {
-    if (followTarget.isEmpty) return null;
-    return entity?.scene?.findEntityByName(followTarget)?.getComponent<Transform2DComponent>()?.worldPosition;
+    final ps = _targets();
+    if (ps.isEmpty) return null;
+    if (ps.length == 1) return ps.first;
+    final box = _box(ps);
+    return vm.Vector2(box.center.dx, box.center.dy);
+  }
+
+  static Rect _box(List<vm.Vector2> ps) {
+    var r = Rect.fromLTWH(ps.first.x, ps.first.y, 0, 0);
+    for (final p in ps.skip(1)) {
+      r = r.expandToInclude(Rect.fromLTWH(p.x, p.y, 0, 0));
+    }
+    return r;
+  }
+
+  /// The zoom that fits every target ([fitTargets]), or null when off.
+  double? _fitZoom() {
+    if (!fitTargets || designWidth <= 0 || designHeight <= 0) return null;
+    final ps = _targets();
+    if (ps.isEmpty) return null;
+    final box = _box(ps);
+    final lo = math.min(minZoom, maxZoom), hi = math.max(minZoom, maxZoom);
+    final want = math.min(designWidth / (box.width + 2 * fitPadding), designHeight / (box.height + 2 * fitPadding));
+    return want.clamp(lo, hi).toDouble();
+  }
+
+  /// The largest area the camera can show around its centre (at [minZoom]
+  /// when fitting targets), less [margin]. Keeping players inside it means
+  /// nobody walks off a shared screen.
+  Rect reach({double margin = 0}) {
+    final z = fitTargets ? math.max(0.01, math.min(minZoom, maxZoom)) : _zoom;
+    final c = position;
+    return Rect.fromCenter(center: Offset(c.x, c.y), width: math.max(0, designWidth / z - 2 * margin), height: math.max(0, designHeight / z - 2 * margin));
+  }
+
+  /// [p] moved inside [reach] (and the bounds, if set).
+  vm.Vector2 keepInReach(vm.Vector2 p, {double margin = 0}) {
+    var r = reach(margin: margin);
+    if (boundsEnabled) {
+      r = r.intersect(Rect.fromLTRB(boundsMin.x + margin, boundsMin.y + margin, boundsMax.x - margin, boundsMax.y - margin));
+    }
+    if (r.width < 0 || r.height < 0) return p;
+    return vm.Vector2(p.x.clamp(r.left, r.right).toDouble(), p.y.clamp(r.top, r.bottom).toDouble());
   }
 
   vm.Vector2 _clamp(vm.Vector2 p) {
@@ -202,6 +339,18 @@ class Camera2DComponent extends EmberComponent {
         _num('designWidth', 'Design Width', () => designWidth, (v) => designWidth = v, min: 0),
         _num('designHeight', 'Design Height', () => designHeight, (v) => designHeight = v, min: 0),
         _num('zoom', 'Zoom', () => zoom, (v) => zoom = v.clamp(0.05, 20).toDouble(), step: 0.05, min: 0.05, max: 20),
+        _num('vignette', 'Vignette', () => vignette, (v) => vignette = v.clamp(0, 1).toDouble(), step: 0.05, min: 0, max: 1),
+        _num('darkness', 'Darkness', () => darkness, (v) => darkness = v.clamp(0, 1).toDouble(), step: 0.05, min: 0, max: 1),
+        InspectableProperty<Color>(
+          name: 'darknessColor',
+          label: 'Darkness Color',
+          type: InspectableType.color,
+          getter: () => darknessColor,
+          setter: (v) {
+            darknessColor = v;
+            notifyListeners();
+          },
+        ),
         InspectableProperty<String>(
           name: 'followTarget',
           label: 'Follow Entity',
@@ -211,8 +360,22 @@ class Camera2DComponent extends EmberComponent {
             followTarget = v;
             notifyListeners();
           },
-          tooltip: 'Name of the entity to follow (empty = fixed camera)',
+          tooltip: 'Name of the entity to follow (empty = fixed camera); several, comma-separated, for a shared screen',
         ),
+        InspectableProperty<bool>(
+          name: 'fitTargets',
+          label: 'Zoom To Fit Targets',
+          type: InspectableType.boolean,
+          getter: () => fitTargets,
+          setter: (v) {
+            fitTargets = v;
+            notifyListeners();
+          },
+          tooltip: 'Zoom out (down to Min Zoom) so every follow target stays in view',
+        ),
+        _num('minZoom', 'Min Zoom', () => minZoom, (v) => minZoom = v.clamp(0.05, 20).toDouble(), step: 0.05, min: 0.05, max: 20),
+        _num('maxZoom', 'Max Zoom', () => maxZoom, (v) => maxZoom = v.clamp(0.05, 20).toDouble(), step: 0.05, min: 0.05, max: 20),
+        _num('fitPadding', 'Fit Padding', () => fitPadding, (v) => fitPadding = v, min: 0),
         _num('smoothing', 'Smoothing', () => smoothing, (v) => smoothing = v.clamp(0.0, 0.99), step: 0.05, min: 0, max: 0.99),
         InspectableProperty<vm.Vector2>(
           name: 'deadZone',
@@ -278,6 +441,10 @@ class Camera2DComponent extends EmberComponent {
         'boundsMax': [boundsMax.x, boundsMax.y],
         'backgroundColor': backgroundColor.toARGB32(),
         if (zoom != 1) 'zoom': zoom,
+        if (vignette != 0) 'vignette': vignette,
+        if (darkness != 0) 'darkness': darkness,
+        if (darkness != 0) 'darknessColor': darknessColor.toARGB32(),
+        if (fitTargets) ...{'fitTargets': true, 'minZoom': minZoom, 'maxZoom': maxZoom, 'fitPadding': fitPadding},
       };
 
   @override
@@ -297,6 +464,13 @@ class Camera2DComponent extends EmberComponent {
     boundsMax = v2(json['boundsMax'], vm.Vector2(640, 360));
     backgroundColor = Color(json['backgroundColor'] as int? ?? 0xFF121316);
     zoom = (json['zoom'] as num?)?.toDouble() ?? 1;
+    vignette = (json['vignette'] as num?)?.toDouble() ?? 0;
+    darkness = (json['darkness'] as num?)?.toDouble() ?? 0;
+    darknessColor = Color(json['darknessColor'] as int? ?? 0xFF05060C);
+    fitTargets = json['fitTargets'] as bool? ?? false;
+    minZoom = (json['minZoom'] as num?)?.toDouble() ?? 0.6;
+    maxZoom = (json['maxZoom'] as num?)?.toDouble() ?? 1;
+    fitPadding = (json['fitPadding'] as num?)?.toDouble() ?? 120;
     notifyListeners();
   }
 

@@ -26,6 +26,13 @@ class HealthComponent extends EmberComponent {
   double invulnerableTime;
   bool destroyOnDeath;
 
+  /// How a 2D sprite shows a hit: "red" (tinted), "white" (a bright flash,
+  /// good for fast games where things are hit many times a second) or "none".
+  String hitFlash;
+
+  /// Shows a small health bar above it (2D) once it has been hurt.
+  bool showBar;
+
   double _invulnerable = 0;
   double _flash = 0;
   Color? _tintBeforeFlash;
@@ -36,6 +43,8 @@ class HealthComponent extends EmberComponent {
     this.team = 'monster',
     this.invulnerableTime = 0.3,
     this.destroyOnDeath = true,
+    this.hitFlash = 'red',
+    this.showBar = false,
   }) : health = health ?? maxHealth;
 
   bool get isDead => health <= 0;
@@ -98,7 +107,12 @@ class HealthComponent extends EmberComponent {
     final self = entity;
     if (self != null) _flashMeshes(self);
     final sprite = entity?.getComponent<FlameSpriteComponent>();
-    if (sprite == null) return;
+    if (sprite == null || hitFlash == 'none') return;
+    if (hitFlash == 'white') {
+      // A flash plays out before the next starts, so steady fire flickers
+      if (sprite.flash <= 0) sprite.flash = 1;
+      return;
+    }
     _tintBeforeFlash ??= sprite.tint;
     sprite.tint = const Color(0xFFFF5A5A);
     _flash = 0.12;
@@ -114,6 +128,8 @@ class HealthComponent extends EmberComponent {
   @override
   void onUpdate(double dt) {
     if (_invulnerable > 0) _invulnerable -= dt;
+    final sprite = entity?.getComponent<FlameSpriteComponent>();
+    if (sprite != null && sprite.flash > 0) sprite.flash = math.max(0, sprite.flash - dt * 9);
     if (_flash > 0) {
       _flash -= dt;
       if (_flash <= 0) {
@@ -175,6 +191,29 @@ class HealthComponent extends EmberComponent {
             notifyListeners();
           },
         ),
+        InspectableProperty<String>(
+          name: 'hitFlash',
+          label: 'Hit Flash',
+          type: InspectableType.options,
+          options: const ['red', 'white', 'none'],
+          getter: () => hitFlash,
+          setter: (v) {
+            hitFlash = v;
+            notifyListeners();
+          },
+          tooltip: 'red: tinted; white: a bright flash (fast games); none',
+        ),
+        InspectableProperty<bool>(
+          name: 'showBar',
+          label: 'Health Bar',
+          type: InspectableType.boolean,
+          getter: () => showBar,
+          setter: (v) {
+            showBar = v;
+            notifyListeners();
+          },
+          tooltip: 'A small bar above it once it has been hurt (2D)',
+        ),
       ];
 
   @override
@@ -184,6 +223,8 @@ class HealthComponent extends EmberComponent {
         'team': team,
         'invulnerableTime': invulnerableTime,
         'destroyOnDeath': destroyOnDeath,
+        if (hitFlash != 'red') 'hitFlash': hitFlash,
+        if (showBar) 'showBar': true,
       };
 
   @override
@@ -193,6 +234,8 @@ class HealthComponent extends EmberComponent {
     team = json['team'] as String? ?? 'monster';
     invulnerableTime = (json['invulnerableTime'] as num?)?.toDouble() ?? 0.3;
     destroyOnDeath = json['destroyOnDeath'] as bool? ?? true;
+    hitFlash = json['hitFlash'] as String? ?? 'red';
+    showBar = json['showBar'] as bool? ?? false;
     notifyListeners();
   }
 

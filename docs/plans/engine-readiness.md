@@ -13,25 +13,27 @@ Items marked (4.x) are the same work as that roadmap row.
 ## What "ready" means: the 2D genre checklist
 
 A genre counts as ready when a small sample game or automated test plays
-through it. Today:
+through it. New samples use a modern look: smooth painted art (gradients,
+soft glow, no pixel art), glow sprites and particles, synth music. Their art
+comes from `flutter test tool/painted/paint_art_test.dart`. Today:
 
 | Genre | Status | Missing |
 |---|---|---|
-| Platformer | ✅ Ember Quest, 2D Platformer | gamepad |
-| Top-down action RPG | ✅ Ember Legends | gamepad |
+| Platformer | ✅ Ember Quest, 2D Platformer | none |
+| Top-down action RPG | ✅ Ember Legends | none |
 | Physics puzzle | ✅ Ember Siege | none |
 | Arcade / one-button | ✅ Flappy Arcade | none |
 | Match-3 / grid puzzle | ✅ Ember Gems | none |
 | Card / board game | ✅ Ember Solitaire (`pick`, `layer`, drag in script) | a board-game sample (turns, AI opponent) |
 | Visual novel / story | ✅ The Last Ember (Story Player) | localization, more text effects (colour, shake, speed) |
-| Shoot-'em-up / bullet hell | ⚠️ | performance at 1,000+ sprites, object pooling |
-| Metroidvania / large maps | ⚠️ | big-map performance, map/minimap, room transitions |
-| Tower defense | ⚠️ pathfinding exists | waves helper, placement grid, sample |
-| Roguelike | ⚠️ | seeded random, procedural rooms/noise helpers |
-| Strategy / city builder | ❌ | isometric and hex maps, unit selection, Y-sort |
-| Fighting game | ❌ | gamepad, frame-exact hitboxes, input buffer |
-| Rhythm game | ❌ | sample-accurate audio timing |
-| Local co-op | ❌ | gamepad, several players' input |
+| Shoot-'em-up / bullet hell | ✅ Ember Nova (Bullet Pool 2D) | batching for ordinary sprites (bullets and glow particles are batched) |
+| Metroidvania / large maps | ✅ Ember Spire (Camera Room 2D, UI Minimap, double jump / dash / wall jump) | chunked maps far bigger than 100 × 100 tiles (A2.3) |
+| Tower defense | ✅ Ember Bastion (Path Follower 2D, grid building, homing/splash shots) | none |
+| Roguelike | ✅ Ember Depths (seeded dungeons, auto-tiling, Light 2D) | light-blocking walls (shadows) |
+| Strategy / city builder | ✅ Ember Isles (isometric TileMap, hex too, Y-sort, box selection, grid paths) | fog of war, an AI opponent that builds |
+| Fighting game | ✅ Ember Clash (frame data at 60 steps/s, motion inputs, gamepads) | online play, rollback |
+| Rhythm game | ✅ Ember Pulse (Music.time clock, charts, offset calibration) | beat-detection for players' own songs |
+| Local co-op | ✅ Ember Kindred (1-4 players, drop-in, shared camera that zooms to fit, keyboard halves and pads) | split screen |
 | Online multiplayer | ❌ | networking (needs a server decision) |
 
 ## Part A: complete 2D readiness
@@ -40,7 +42,7 @@ through it. Today:
 
 | # | Work | Done when |
 |---|---|---|
-| A1.1 | **Gamepad** (4.4): Xbox/PlayStation pads as actions and stick axes on Windows, Android and web; several pads for several players (`Input.player(2).action("jump")`). | Every template is playable on a pad; a 2-player test. |
+| A1.1 | **Gamepad** (4.4) ✅: Xbox/PlayStation/generic pads (the `gamepads` package) on Windows, Android, web, macOS and Linux; pad 1 drives `Input.move` / `Input.action`; `Input.player(n)` (keyboard half + pad) and `Input.pad(n)`; motion inputs. Still to do: remapping in a settings screen, rumble. | Templates that use `Input.move` / `Input.action` play on a pad; 2-player tests pass. |
 | A1.2 | **Drag-and-drop import + sprite-sheet slicer** (4.2): drop PNG/WAV/OGG/MP3 onto the editor; slice by grid or auto-detect. | Import a sheet and use its frames in under a minute. |
 | A1.3 | **Animation editor** (4.3): pick frames, set FPS and loop, preview; writes Sprite Animator clips. | Clips made without editing JSON. |
 | A1.4 | **Prefabs as files** (4.1): `.prefab` assets, edit once and every copy updates; `spawn("Crate")` loads them. | Templates use prefab files instead of hidden entities. |
@@ -49,19 +51,19 @@ through it. Today:
 
 | # | Work |
 |---|---|
-| A2.1 | **Auto-tiling** (rules for edges and corners) and **several tilesets per map** (4.7). |
-| A2.2 | **Isometric and hex tilemaps** with the right draw order (Y-sort) for characters walking behind objects. |
+| A2.1 | **Auto-tiling** (rules for edges and corners) and **several tilesets per map** (4.7). 16-piece wall auto-tiling ✅ (`tilemap.autotile`); corner (47-piece) rules and several tilesets per map still to do. |
+| A2.2 | **Isometric and hex tilemaps** ✅ (Layout on the TileMap, back-to-front drawing, picking, paths) and **Y-sort** ✅ on Transform 2D. |
 | A2.3 | **Tile layers** (background, decoration, collision, foreground) and **big maps in chunks** so only what is on screen is drawn and collided. |
-| A2.4 | **Rooms and map:** room transitions with camera bounds, and a minimap / world-map widget. |
-| A2.5 | **Procedural helpers:** seeded random (`Random(seed)`), noise, room-and-corridor and cave generators that write into a tilemap. |
+| A2.4 | **Rooms and map:** ✅ Camera Room 2D (the camera keeps to the room and glides between rooms, `onRoomEnter`) and a UI Minimap that reveals what was explored (saved as text). A full-screen world map is still to do. |
+| A2.5 | **Procedural helpers:** ✅ seeded random (`Random(seed)`), noise, room-and-corridor and cave generators that write into a tilemap, floor variation. |
 
 ### A3. Look and feel
 
 | # | Work |
 |---|---|
-| A3.1 | **2D lights and shadows:** point and spot lights, ambient darkness, light-blocking tiles. Optional normal maps later. |
+| A3.1 | **2D lights and shadows:** ✅ point lights (Light 2D with flicker) and ambient darkness on the Camera 2D, with glowing things drawn above it. Still to do: spot lights, light-blocking tiles (shadows), normal maps. |
 | A3.2 | **Sprite shaders:** flash, outline, dissolve, palette swap, wave/distortion, written as Flutter fragment shaders. Those work on Windows, Android and web; checked on all three. |
-| A3.3 | **Screen effects and transitions:** fades and wipes between levels, screen flash, slow motion, a vignette, chromatic aberration. |
+| A3.3 | **Screen effects and transitions:** fades and wipes between levels, screen flash ✅, slow motion ✅ (`Game.timeScale`), a vignette ✅, chromatic aberration. Also done: additive glow sprites and particles, auto-scrolling parallax, glowing UI text and outline buttons. |
 | A3.4 | **Tweens from Ember Script:** `tween(self, "x", 200, 0.5, "easeOut")` for UI and juice (the engine already has tweens; expose them). |
 
 ### A4. Animation
@@ -78,14 +80,14 @@ through it. Today:
 | A5.1 | **Localization** (4.6): string tables, `tr("key")`, a language picker, right-to-left text. |
 | A5.2 | **More UI:** text input fields, scroll lists, grids (inventories, card hands), layout containers, sliders and toggles (settings menus), drag-and-drop between slots. |
 | A5.3 | **Story tools:** ✅ done in the Story Player (portraits with expressions, choices with conditions, typewriter and `*stress*`, history, Auto/Skip, save slots). Still to do: localization and more text effects (colour, shake, speed). |
-| A5.4 | **Audio:** mixer and music crossfade (4.5), sample-accurate timing and beat events for rhythm games, looping music sections. |
+| A5.4 | **Audio:** mixer and music crossfade (4.5), looping music sections. Rhythm timing ✅ (`Music.time` follows the played position, pause, offset, end of song). |
 | A5.5 | **Video playback** for intros and cutscenes (check package support on Windows, Android and web first). |
 
 ### A6. Scale and performance
 
 | # | Work | Done when |
 |---|---|---|
-| A6.1 | **Sprite batching** (one `drawAtlas` per sheet) and **object pooling** for spawned bullets and particles. | 2,000 moving sprites at 60 fps on a mid laptop and a mid Android phone. |
+| A6.1 | **Sprite batching** (one `drawAtlas` per sheet) and **object pooling** for spawned bullets and particles. Bullets ✅ (Bullet Pool 2D: 2,000 bullets update in well under 4 ms) and glow particles ✅ are batched; ordinary sprites are not yet. | 2,000 moving sprites at 60 fps on a mid laptop and a mid Android phone. |
 | A6.2 | **Spatial hashing** for hitboxes and triggers. | 500 enemies colliding without slowdown. |
 | A6.3 | **Stress tests in CI** for big tilemaps (500 x 500), many entities, long play sessions (memory). | Numbers tracked per release. |
 
@@ -93,7 +95,7 @@ through it. Today:
 
 | # | Work |
 |---|---|
-| A7.1 | **Local multiplayer:** several gamepads, split or shared screen (needs A1.1). |
+| A7.1 | **Local multiplayer** ✅ shared screen: up to 4 players (`Input.player(n)`, pads 1-4), a Camera 2D that follows several targets and zooms to fit (`fitTargets`, `minZoom` / `maxZoom`, `keepInView`); Ember Kindred uses all of it, Ember Clash the 2-player input. Still to do: split screen (several cameras and viewports). |
 | A7.2 | **Online, small scale:** host/join over WebSocket with a relay, entity sync and player input; online leaderboards. Needs a server, so it ties into the sales-model decision. |
 
 ### Order for Part A
